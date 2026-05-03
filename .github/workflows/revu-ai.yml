@@ -30,9 +30,9 @@ jobs:
         with:
           fetch-depth: 0
 
+      # No `version:` here — pnpm/action-setup reads it from package.json's
+      # `packageManager` field, and specifying both is an error.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
 
       - uses: actions/setup-node@v4
         with:
