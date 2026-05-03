@@ -1,10 +1,10 @@
 {
-  "name": "revu",
-  "version": "0.0.1",
+  "name": "revu-ai",
+  "version": "0.1.0",
   "description": "Parallel AI code review with per-rule Claude agents",
   "type": "module",
   "bin": {
-    "revu": "dist/cli.js"
+    "revu-ai": "dist/cli.js"
   },
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -17,17 +17,43 @@
   "files": [
     "dist",
     "examples",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
     "build": "tsc",
     "dev": "tsx src/cli.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "prepack": "pnpm run build",
+    "prepublishOnly": "pnpm run typecheck && pnpm run test && pnpm run build"
   },
   "engines": {
     "node": ">=20"
+  },
+  "keywords": [
+    "code-review",
+    "ai",
+    "claude",
+    "anthropic",
+    "cli",
+    "git",
+    "diff",
+    "review",
+    "static-analysis",
+    "mcp",
+    "agent"
+  ],
+  "author": "PKWadsworth",
+  "license": "MIT",
+  "homepage": "https://github.com/PKWadsworth/revu#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/PKWadsworth/revu.git"
+  },
+  "bugs": {
+    "url": "https://github.com/PKWadsworth/revu/issues"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.1.0",

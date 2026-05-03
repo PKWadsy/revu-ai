@@ -7,9 +7,19 @@ The point: instead of one giant "be a good reviewer" prompt, you write narrow, s
 ## Install
 
 ```bash
-pnpm add -g revu
-# or:
-npx revu init
+# zero-install (npx / bunx / pnpm dlx — pick your runner)
+npx      revu-ai init
+bunx     revu-ai init
+pnpm dlx revu-ai init
+
+# or install globally
+npm  i  -g revu-ai
+pnpm add -g revu-ai
+bun  add -g revu-ai
+
+# or as a project devDep
+npm  i  -D revu-ai
+pnpm add -D revu-ai
 ```
 
 Set `ANTHROPIC_API_KEY` in your environment.
@@ -18,12 +28,12 @@ Set `ANTHROPIC_API_KEY` in your environment.
 
 ```bash
 cd my-project
-revu init             # spawn an agent to inspect the repo and scaffold rule files
-revu list             # show what would be reviewed
-revu                  # run it
+revu-ai init             # spawn an agent to inspect the repo and scaffold rule files
+revu-ai list             # show what would be reviewed
+revu-ai                  # run it
 ```
 
-`revu init` spawns a Claude agent that inspects your repo (CLAUDE.md, README, manifests, lint configs, top-level structure) and writes a curated set of `.revu.md` files. Globals go in `.revu/<topic>.revu.md`; rules scoped to a sub-service go alongside it (e.g. `services/auth/openapi.revu.md`). The agent searches for *implicit contracts* first — places where two parts of the codebase must be kept in sync but the type system doesn't enforce it — because those are the highest-value rules.
+`revu-ai init` spawns a Claude agent that inspects your repo (CLAUDE.md, README, manifests, lint configs, top-level structure) and writes a curated set of `.revu.md` files. Globals go in `.revu/<topic>.revu.md`; rules scoped to a sub-service go alongside it (e.g. `services/auth/openapi.revu.md`). The agent searches for *implicit contracts* first — places where two parts of the codebase must be kept in sync but the type system doesn't enforce it — because those are the highest-value rules.
 
 The agent is opinionated: language-aware (uses your project's actual logger / docstring style / convention idioms), refuses to restate things your linter and type-checker already enforce, and writes one concern per file. Re-run with `--force` to overwrite. Calibrate the wall-clock cap with `--timeout-ms` (default 10min).
 
@@ -72,9 +82,9 @@ Bash is gated to read-only commands (`git diff/log/show/status`, `cat`, `head`, 
 ## CLI
 
 ```
-revu [options]              # run a review (default command)
-revu init [--dir .revu]     # scaffold starter rules + config
-revu list                   # show discovered rule files
+revu-ai [options]              # run a review (default command)
+revu-ai init [--dir .revu]     # scaffold starter rules + config
+revu-ai list                   # show discovered rule files
 
 Options:
   --base <ref>              # diff base; default: auto-detected origin/main
@@ -137,7 +147,7 @@ A starter workflow lives at `examples/github-workflow.yml`. Drop it into `.githu
 The default reviewer is Claude Code via `@anthropic-ai/claude-agent-sdk`. The `ReviewAgent` interface in `src/providers/types.ts` is the swap-out boundary:
 
 ```ts
-import { registerProvider } from "revu";
+import { registerProvider } from "revu-ai";
 
 registerProvider("my-provider", (cfg) => ({
   name: "my-provider",
@@ -149,7 +159,7 @@ registerProvider("my-provider", (cfg) => ({
 }));
 ```
 
-Then `revu --provider my-provider` (or set it in `revu.config.json`).
+Then `revu-ai --provider my-provider` (or set it in `revu.config.json`).
 
 ## License
 

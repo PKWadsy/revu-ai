@@ -1,6 +1,9 @@
 #!/usr/bin/env node
+import { createRequire } from "node:module";
 import { Command } from "commander";
 import { findRepoRoot } from "./refs.js";
+
+const pkg = createRequire(import.meta.url)("../package.json") as { name: string; version: string };
 import { loadConfig, type CliOverrides } from "./config.js";
 import { listRules, run, RevuExit } from "./runner.js";
 import { emitJson } from "./output/json.js";
@@ -41,9 +44,9 @@ const SEV_LABEL: Record<Severity, string> = {
 const program = new Command();
 
 program
-  .name("revu")
+  .name(pkg.name)
   .description("Parallel AI code review with per-rule Claude agents")
-  .version("0.0.1");
+  .version(pkg.version);
 
 program
   .command("list")
