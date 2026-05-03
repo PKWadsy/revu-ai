@@ -51,6 +51,10 @@ jobs:
           restore-keys: |
             revu-ai-pr-${{ github.event.pull_request.number }}-
 
+      # `if: always()` on the post step below ensures findings still land on
+      # the PR even if this step exits non-zero (e.g. findings >= --fail-on,
+      # or rule agents erroring out). The job's overall status will be the
+      # truthful red/green of this step's outcome.
       - name: Run revu-ai (built from source)
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -66,7 +70,6 @@ jobs:
             --output json \
             --output-file /tmp/revu.json \
             $PRIOR_FLAG
-        continue-on-error: true
 
       - name: Post review comments
         if: always()

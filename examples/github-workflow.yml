@@ -58,9 +58,8 @@ jobs:
             --output json \
             --output-file /tmp/revu.json \
             $PRIOR_FLAG
-        # Don't fail the job here — let the post step always run so findings
-        # land on the PR even when the review exits non-zero on findings.
-        continue-on-error: true
+        # Note: `if: always()` on the post step below already keeps it running
+        # if this step exits non-zero, so findings still land on the PR.
 
       - name: Post review comments
         if: always()
