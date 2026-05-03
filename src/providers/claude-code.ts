@@ -72,7 +72,7 @@ export const claudeCodeProvider: ReviewAgentFactory = (cfg) => ({
               }
               return {
                 behavior: "deny",
-                message: `Bash command rejected for safety: revu reviewers may only run read-only commands (git diff/log/show/status, cat, head, tail, ls, wc, find). Got: ${truncate(command, 200)}`,
+                message: `Bash command rejected for safety: revu-ai reviewers may only run read-only commands (git diff/log/show/status, cat, head, tail, ls, wc, find). Got: ${truncate(command, 200)}`,
               };
             }
             return { behavior: "allow", updatedInput: toolInput };

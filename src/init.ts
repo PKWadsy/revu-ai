@@ -39,7 +39,7 @@ export async function runInit(opts: InitOptions): Promise<InitResult> {
     const existing = listExistingGlobalRules(repoRoot);
     if (existing.length > 0) {
       throw new InitRefusedError(
-        `revu init: \`.revu/\` already contains rule files (${existing.join(", ")}). Pass --force to overwrite.`,
+        `revu-ai init: \`.revu/\` already contains rule files (${existing.join(", ")}). Pass --force to overwrite.`,
       );
     }
   }

@@ -39,7 +39,7 @@ const SEV_LABEL: Record<Severity, string> = {
 export function emitPretty(report: RunReport, outputFile?: string): void {
   const lines: string[] = [];
 
-  lines.push(paint("bold", `revu ${report.runId.slice(0, 8)}`));
+  lines.push(paint("bold", `revu-ai ${report.runId.slice(0, 8)}`));
   lines.push(
     paint(
       "dim",

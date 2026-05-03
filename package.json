@@ -1,6 +1,6 @@
 {
   "name": "revu-ai",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Parallel AI code review with per-rule Claude agents",
   "type": "module",
   "bin": {
@@ -47,13 +47,13 @@
   ],
   "author": "PKWadsworth",
   "license": "MIT",
-  "homepage": "https://github.com/PKWadsworth/revu#readme",
+  "homepage": "https://github.com/PKWadsy/revu-ai#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/PKWadsworth/revu.git"
+    "url": "git+https://github.com/PKWadsy/revu-ai.git"
   },
   "bugs": {
-    "url": "https://github.com/PKWadsworth/revu/issues"
+    "url": "https://github.com/PKWadsy/revu-ai/issues"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.1.0",

@@ -8,7 +8,7 @@ export function buildInitUserPrompt(input: InitUserPromptInput): string {
     ? "You may overwrite existing `.revu.md` files if you decide a better one belongs in the same place."
     : "Do NOT overwrite existing `.revu.md` files. If one already exists at a path you would otherwise choose, pick a different name or skip that rule.";
 
-  return `Inspect the repository at \`${input.repoRoot}\` and create a curated set of revu rule files.
+  return `Inspect the repository at \`${input.repoRoot}\` and create a curated set of revu-ai rule files.
 
 Steps:
 1. Identify the stack and conventions (read whatever README / contributor docs / config / setup files exist).

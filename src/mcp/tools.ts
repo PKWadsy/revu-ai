@@ -24,7 +24,7 @@ export const ReportFindingShape = {
 export const ReportFindingObject = z.object(ReportFindingShape);
 export type ReportFindingInput = z.infer<typeof ReportFindingObject>;
 
-export const REPORT_FINDING_DESCRIPTION = `Report a code-review finding to the revu runner.
+export const REPORT_FINDING_DESCRIPTION = `Report a code-review finding to the revu-ai runner.
 Call this tool once for each issue you find. The runner aggregates findings across all reviewers.
 Severity guidance:
   aesthetic = nit / style preference

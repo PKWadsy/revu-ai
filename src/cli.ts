@@ -132,10 +132,10 @@ program
       process.exit(0);
     } catch (e) {
       if (e instanceof InitRefusedError) {
-        process.stderr.write(`${paint("yellow", paint("bold", "revu init:"))} ${e.message.replace(/^revu init: /, "")}\n`);
+        process.stderr.write(`${paint("yellow", paint("bold", "revu-ai init:"))} ${e.message.replace(/^revu-ai init: /, "")}\n`);
         process.exit(1);
       }
-      process.stderr.write(`${paint("red", paint("bold", "revu init:"))} ${(e as Error).message}\n`);
+      process.stderr.write(`${paint("red", paint("bold", "revu-ai init:"))} ${(e as Error).message}\n`);
       process.exit(2);
     }
   });
@@ -219,7 +219,7 @@ program
       const failed = report.rules.filter((r) => !r.ok);
       if (failed.length === report.rules.length && failed.length > 0) {
         const messages = new Set(failed.map((r) => r.errorMessage ?? "unknown"));
-        const prefix = paint("red", paint("bold", "revu:"));
+        const prefix = paint("red", paint("bold", "revu-ai:"));
         if (messages.size === 1) {
           process.stderr.write(
             `${prefix} all ${failed.length} rule agents failed: ${paint("red", String([...messages][0]))}\n`,
@@ -233,7 +233,7 @@ program
       const timedOut = report.rules.filter((r) => r.timedOut);
       if (timedOut.length > 0) {
         process.stderr.write(
-          `${paint("yellow", paint("bold", "revu:"))} ${timedOut.length} rule(s) timed out — partial findings included in the report\n`,
+          `${paint("yellow", paint("bold", "revu-ai:"))} ${timedOut.length} rule(s) timed out — partial findings included in the report\n`,
         );
       }
 

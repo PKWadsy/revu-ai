@@ -1,6 +1,6 @@
-# revu
+# revu-ai
 
-Parallel AI code review for any git repo. You drop Markdown rule files (`*.revu.md`) anywhere in your project; on each run, `revu` spawns a separate Claude agent **per rule file** in parallel. Each agent reviews the current diff *only through the lens of its assigned rules* and reports findings back through a sidecar MCP server. The aggregated findings come out as JSON, pretty terminal output, or GitHub Actions PR annotations.
+Parallel AI code review for any git repo. You drop Markdown rule files (`*.revu.md`) anywhere in your project; on each run, `revu-ai` spawns a separate Claude agent **per rule file** in parallel. Each agent reviews the current diff *only through the lens of its assigned rules* and reports findings back through a sidecar MCP server. The aggregated findings come out as JSON, pretty terminal output, or GitHub Actions PR annotations.
 
 The point: instead of one giant "be a good reviewer" prompt, you write narrow, scoped rule files (dead code, contract enforcement, dependency hygiene, naming conventions, etc.) and they run independently. Most rule agents will silently exit on any given diff because the changes don't touch their scope.
 
@@ -62,7 +62,7 @@ The agent is told to only report findings that match the rule. If your diff has 
 ## How it works
 
 ```
-revu CLI
+revu-ai CLI
   ├─ discover *.revu.md (respects .gitignore)
   ├─ resolve review target (default: origin/main...HEAD)
   ├─ start MCP sidecar on a random localhost port
@@ -140,7 +140,7 @@ The JSON shape is the stable contract for downstream tooling:
 
 ## GitHub Actions
 
-A starter workflow lives at `examples/github-workflow.yml`. Drop it into `.github/workflows/revu.yml` and add `ANTHROPIC_API_KEY` as a repo secret. With `--output github`, findings render as PR annotations.
+A starter workflow lives at `examples/github-workflow.yml`. Drop it into `.github/workflows/revu-ai.yml` and add `ANTHROPIC_API_KEY` as a repo secret. With `--output github`, findings render as PR annotations.
 
 ## Custom providers
 

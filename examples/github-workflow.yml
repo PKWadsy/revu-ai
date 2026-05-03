@@ -1,11 +1,11 @@
-# Drop this into `.github/workflows/revu.yml` in any repo where you want
-# revu to run on PRs. Findings render as PR annotations because the `github`
+# Drop this into `.github/workflows/revu-ai.yml` in any repo where you want
+# revu-ai to run on PRs. Findings render as PR annotations because the `github`
 # formatter emits workflow commands.
 #
 # You'll need to set ANTHROPIC_API_KEY (or your provider's equivalent) as
-# a repository secret. The workflow uses --base origin/$BASE_REF so revu
+# a repository secret. The workflow uses --base origin/$BASE_REF so revu-ai
 # reviews the full PR.
-name: revu
+name: revu-ai
 
 on:
   pull_request:
@@ -29,7 +29,7 @@ jobs:
 
       - run: npm install -g revu-ai
 
-      - name: Run revu
+      - name: Run revu-ai
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           BASE_REF: ${{ github.event.pull_request.base.ref }}

@@ -26,7 +26,7 @@ function formatLine(f: Finding): string {
   const params: string[] = [`file=${escape(f.path)}`];
   if (f.line !== undefined) params.push(`line=${f.line}`);
   if (f.lineEnd !== undefined) params.push(`endLine=${f.lineEnd}`);
-  params.push(`title=${escape(`revu / ${f.ruleId} (${f.severity})`)}`);
+  params.push(`title=${escape(`revu-ai / ${f.ruleId} (${f.severity})`)}`);
   return `::${command} ${params.join(",")}::${escapeMessage(f.message)}`;
 }
 

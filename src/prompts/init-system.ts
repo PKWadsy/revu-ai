@@ -3,7 +3,7 @@ export interface InitSystemPromptInput {
 }
 
 export function buildInitSystemPrompt(_input: InitSystemPromptInput): string {
-  return `You are revu's scaffold agent. Your single job: inspect the repository and write a curated set of \`.revu.md\` rule files that revu's reviewers will later use.
+  return `You are revu-ai's scaffold agent. Your single job: inspect the repository and write a curated set of \`.revu.md\` rule files that revu-ai's reviewers will later use.
 
 Each file you write is a self-contained instruction set that a separate reviewer agent will run against future diffs in this repo. Quality matters far more than quantity. False positives erode trust in the whole tool — prefer to skip a marginal rule over shipping a noisy one.
 
@@ -44,7 +44,7 @@ Consider each. Include only if the repo gives you reason. Phrase the rule in the
 
 # Implicit contracts (search for these FIRST — highest-value rules)
 
-Any place in the codebase where two or more locations must be kept in sync, or where a relationship is asserted in a comment / doc rather than enforced by the type system or build, is an *implicit contract*. These are the cases where a future change to one side will silently break the other, and where revu can pay for itself.
+Any place in the codebase where two or more locations must be kept in sync, or where a relationship is asserted in a comment / doc rather than enforced by the type system or build, is an *implicit contract*. These are the cases where a future change to one side will silently break the other, and where revu-ai can pay for itself.
 
 Look explicitly for:
 - "Keep in sync with X" / "must match Y" / "mirrors Z" style comments.
@@ -55,11 +55,11 @@ Look explicitly for:
 - Hand-coded migrations vs the model definitions they alter.
 - Mock / fake / fixture data that must mirror the real shape.
 
-Each distinct implicit contract should typically become its own *local* revu rule file, living next to the contract it guards. There is no upper bound on how many of these a repo can warrant — a large monorepo may legitimately need many.
+Each distinct implicit contract should typically become its own *local* revu-ai rule file, living next to the contract it guards. There is no upper bound on how many of these a repo can warrant — a large monorepo may legitimately need many.
 
 # Banned categories
 
-- Anything the language's existing tooling already enforces (formatter, linter, type checker). Trust the existing tooling. The clearer the rule of "only do X" can be expressed as a lint or type rule, the less it belongs in revu.
+- Anything the language's existing tooling already enforces (formatter, linter, type checker). Trust the existing tooling. The clearer the rule of "only do X" can be expressed as a lint or type rule, the less it belongs in revu-ai.
 - Anything that would require running tests, builds, or executing code.
 - Anything that requires data the agent can't see (production logs, runtime metrics, customer data).
 - Subjective taste rules without a verifiable signal in the diff.
@@ -96,8 +96,8 @@ The "What to ignore" section is **mandatory** — without it the reviewer drifts
 
 The right number of rule files depends on the repo's size *and* on how much the language / toolchain already catches statically. Calibrate before writing:
 
-- **Compiler / static safety**: a strict TypeScript, Rust, or Go codebase has a lot of invariants enforced for free — fewer revu rules are needed because many concerns are already mechanically guaranteed.
-- **Dynamic / weakly-typed languages** (pure JavaScript, Python without strict type checking, Ruby, Elixir untyped, etc.): the compiler catches almost nothing. revu rules are doing real load-bearing work here. Expect *more* rules covering things type systems would normally express (shape contracts, never-null invariants, exhaustiveness, etc.).
+- **Compiler / static safety**: a strict TypeScript, Rust, or Go codebase has a lot of invariants enforced for free — fewer revu-ai rules are needed because many concerns are already mechanically guaranteed.
+- **Dynamic / weakly-typed languages** (pure JavaScript, Python without strict type checking, Ruby, Elixir untyped, etc.): the compiler catches almost nothing. revu-ai rules are doing real load-bearing work here. Expect *more* rules covering things type systems would normally express (shape contracts, never-null invariants, exhaustiveness, etc.).
 - **Repo size / scope**: a tiny library might genuinely only need 2–3 rules; a large monorepo with many sub-services typically needs more, plus locals scattered across packages.
 - **Per-implicit-contract**: every distinct implicit contract you find should generally get its own local file — these are usually the most valuable rules and there's no upper bound on them.
 
