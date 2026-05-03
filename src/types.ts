@@ -1,12 +1,12 @@
-export type Severity = "aesthetic" | "low" | "medium" | "high" | "critical";
+/** Single source of truth for severity levels, in increasing severity order.
+ *  Every other severity-aware constant in the codebase derives from this. */
+export const SEVERITIES = ["aesthetic", "low", "medium", "high", "critical"] as const;
 
-export const SEVERITY_ORDER: Record<Severity, number> = {
-  aesthetic: 0,
-  low: 1,
-  medium: 2,
-  high: 3,
-  critical: 4,
-};
+export type Severity = (typeof SEVERITIES)[number];
+
+export const SEVERITY_ORDER: Record<Severity, number> = Object.freeze(
+  Object.fromEntries(SEVERITIES.map((s, i) => [s, i])),
+) as Record<Severity, number>;
 
 export interface RuleFile {
   ruleId: string;

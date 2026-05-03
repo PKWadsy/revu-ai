@@ -1,4 +1,4 @@
-import type { Finding, Resolution, Severity } from "../types.js";
+import { SEVERITIES, type Finding, type Resolution, type Severity } from "../types.js";
 
 export class FindingsAggregator {
   private byRule = new Map<string, Finding[]>();
@@ -69,12 +69,11 @@ export class FindingsAggregator {
   }
 
   maxSeverity(): Severity | undefined {
-    const order: Severity[] = ["aesthetic", "low", "medium", "high", "critical"];
     let max = -1;
     for (const f of this.all()) {
-      const idx = order.indexOf(f.severity);
+      const idx = SEVERITIES.indexOf(f.severity);
       if (idx > max) max = idx;
     }
-    return max < 0 ? undefined : order[max];
+    return max < 0 ? undefined : SEVERITIES[max];
   }
 }

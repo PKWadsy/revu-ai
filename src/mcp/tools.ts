@@ -1,8 +1,9 @@
 import { z } from "zod";
+import { SEVERITIES } from "../types.js";
 
 export const ReportFindingShape = {
   severity: z
-    .enum(["aesthetic", "low", "medium", "high", "critical"])
+    .enum(SEVERITIES)
     .describe("Severity of the finding."),
   path: z.string().min(1).describe("Repo-relative file path, forward-slash separated."),
   line: z

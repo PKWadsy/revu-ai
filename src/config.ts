@@ -1,14 +1,8 @@
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
-import type { RevuConfig, Severity } from "./types.js";
+import { SEVERITIES, type RevuConfig, type Severity } from "./types.js";
 
-const SEVERITIES: ReadonlySet<Severity> = new Set([
-  "aesthetic",
-  "low",
-  "medium",
-  "high",
-  "critical",
-]);
+const SEVERITY_SET: ReadonlySet<Severity> = new Set(SEVERITIES);
 
 export const DEFAULT_CONFIG: RevuConfig = {
   pattern: "**/*.revu.md",
@@ -70,9 +64,9 @@ export function loadConfig(repoRoot: string, overrides: CliOverrides): RevuConfi
   if (overrides.timeoutMs !== undefined) merged.timeoutMs = overrides.timeoutMs;
   if (overrides.priorReport !== undefined) merged.priorReport = overrides.priorReport;
   if (overrides.failOn !== undefined) {
-    if (!SEVERITIES.has(overrides.failOn as Severity)) {
+    if (!SEVERITY_SET.has(overrides.failOn as Severity)) {
       throw new Error(
-        `Invalid --fail-on value: ${overrides.failOn}. Expected one of: ${[...SEVERITIES].join(", ")}`,
+        `Invalid --fail-on value: ${overrides.failOn}. Expected one of: ${SEVERITIES.join(", ")}`,
       );
     }
     merged.failOn = overrides.failOn as Severity;

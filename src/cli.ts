@@ -9,7 +9,7 @@ import { listRules, run, RevuExit } from "./runner.js";
 import { emitJson } from "./output/json.js";
 import { emitPretty } from "./output/pretty.js";
 import { emitGithub } from "./output/github.js";
-import type { Severity } from "./types.js";
+import { SEVERITIES, type Severity } from "./types.js";
 
 const COLOR = process.stderr.isTTY && !process.env.NO_COLOR;
 const c = {
@@ -271,11 +271,9 @@ function parseIntOpt(value: string): number {
   return n;
 }
 
-const SEVERITIES_LIST = ["aesthetic", "low", "medium", "high", "critical"] as const;
-type SeverityFlag = (typeof SEVERITIES_LIST)[number];
-function parseSeverityOpt(value: string): SeverityFlag {
-  if ((SEVERITIES_LIST as readonly string[]).includes(value)) return value as SeverityFlag;
-  throw new Error(`Invalid severity "${value}". Expected one of: ${SEVERITIES_LIST.join(", ")}`);
+function parseSeverityOpt(value: string): Severity {
+  if ((SEVERITIES as readonly string[]).includes(value)) return value as Severity;
+  throw new Error(`Invalid severity "${value}". Expected one of: ${SEVERITIES.join(", ")}`);
 }
 
 function registerForgeCommands(program: Command): void {
@@ -305,7 +303,7 @@ function registerForgeCommands(program: Command): void {
         repo?: string;
         commitSha?: string;
         tokenEnv?: string;
-        requestChanges?: SeverityFlag;
+        requestChanges?: Severity;
         dryRun?: boolean;
       }) => {
         const { runForgePost } = await import("./forges/post-cmd.js");
