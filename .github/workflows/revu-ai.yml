@@ -65,10 +65,15 @@ jobs:
           if [ -f /tmp/revu-prior.json ]; then
             PRIOR_FLAG="--prior-report /tmp/revu-prior.json"
           fi
+          # Tier 1 of the Anthropic API caps input tokens at 30k/minute. Seven
+          # parallel reviewer agents on a sizeable diff blow past that, so cap
+          # concurrency to 2 here. Bump back up after upgrading tier.
           node dist/cli.js \
             --base "origin/$BASE_REF" \
             --output json \
             --output-file /tmp/revu.json \
+            --concurrency 2 \
+            --timeout-ms 600000 \
             $PRIOR_FLAG
 
       - name: Post review comments
