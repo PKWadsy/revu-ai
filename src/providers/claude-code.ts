@@ -20,6 +20,7 @@ const ALWAYS_ALLOWED_TOOLS = [
   "Grep",
   "Glob",
   "mcp__revu__report_finding",
+  "mcp__revu__mark_finding_resolved",
 ];
 
 const RESTRICTED_TOOLSET = ["Read", "Grep", "Glob", "Bash"];
@@ -51,6 +52,8 @@ export const claudeCodeProvider: ReviewAgentFactory = (cfg) => ({
             ruleId: input.ruleId,
             rulesContent: input.rulesContent,
             reviewTarget: input.reviewTarget,
+            ...(input.priorFindings ? { priorFindings: input.priorFindings } : {}),
+            ...(input.priorHeadSha ? { priorHeadSha: input.priorHeadSha } : {}),
           }),
           tools: RESTRICTED_TOOLSET,
           allowedTools: ALWAYS_ALLOWED_TOOLS,

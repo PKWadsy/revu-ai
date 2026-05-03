@@ -1,11 +1,15 @@
-import type { ReviewTarget } from "../types.js";
+import type { Finding, ReviewTarget } from "../types.js";
 
 export function buildSystemPrompt(args: {
   ruleId: string;
   rulesContent: string;
   reviewTarget: ReviewTarget;
+  priorFindings?: Finding[];
+  priorHeadSha?: string;
 }): string {
   const inspectHint = inspectionHint(args.reviewTarget);
+  const priorBlock = renderPriorFindingsBlock(args);
+
   return `You are a focused code reviewer for the rule "${args.ruleId}".
 
 You evaluate the changes ONLY through the lens of the rules in the <rules> block below. If the changes are unrelated to those rules, finish your turn without reporting anything — silence is the correct outcome in that case.
@@ -26,6 +30,7 @@ For each issue you find, call the MCP tool \`mcp__revu__report_finding\` with:
   - lineEnd: 1-indexed line number where the issue ends (optional, requires line)
   - message: a clear, concise description of the issue and what to do about it
   - category: optional free-form category tag
+  - priorFp: ONLY when this is a moved version of a finding listed in the prior findings below — pass that finding's fingerprint so the runner can correlate them.
 
 Severity guidance:
   aesthetic = nit / style preference
@@ -38,12 +43,61 @@ Severity guidance:
 
 - Do NOT modify any files.
 - Do NOT report findings outside the scope of the <rules> below.
-- Do NOT include a final summary or commentary about what you reviewed; just call the tool for any findings and stop. The runner doesn't read your text output.
+- Do NOT include a final summary or commentary about what you reviewed; just call tools and stop. The runner doesn't read your text output.
 - If you find nothing, just stop. No "all clear" message needed.
-
+${priorBlock}
 <rules>
 ${args.rulesContent.trim()}
 </rules>
+`;
+}
+
+function renderPriorFindingsBlock(args: {
+  reviewTarget: ReviewTarget;
+  priorFindings?: Finding[];
+  priorHeadSha?: string;
+}): string {
+  const priors = args.priorFindings ?? [];
+  if (priors.length === 0) return "";
+
+  const oldSha = args.priorHeadSha ?? "(unknown)";
+  const headHint = args.reviewTarget.mode === "ref-range"
+    ? args.reviewTarget.head
+    : args.reviewTarget.mode === "staged"
+      ? "the staged changes"
+      : "the working tree";
+
+  // Trim each prior finding to just the fields the agent needs to recognise it.
+  const slim = priors.map((f) => ({
+    fingerprint: f.fingerprint,
+    severity: f.severity,
+    path: f.path,
+    ...(f.line !== undefined ? { line: f.line } : {}),
+    ...(f.lineEnd !== undefined ? { lineEnd: f.lineEnd } : {}),
+    message: f.message,
+    ...(f.category !== undefined ? { category: f.category } : {}),
+  }));
+
+  return `
+# Previously reported findings (this rule)
+
+A prior run of THIS rule, against commit \`${oldSha}\`, reported the findings below. The current target is ${headHint}. Use \`git diff ${oldSha}..${args.reviewTarget.mode === "ref-range" ? args.reviewTarget.head : "HEAD"}\` (or any narrower diff) to see what's changed since then.
+
+For EACH prior finding, decide:
+
+- **Resolved** — the new commits address the issue (offending code removed, fixed, or made acceptable). Call \`mcp__revu__mark_finding_resolved\` with the prior \`fingerprint\` and \`reason="fixed"\`.
+- **No longer applicable** — the file was deleted, the rule's premise no longer holds, etc. Call \`mcp__revu__mark_finding_resolved\` with \`reason="stale"\`.
+- **Still open at the same location** — DO NOTHING. The runner keeps the prior open status; do NOT re-emit a \`report_finding\` for it.
+- **Still open but at a different location** (line moved, code shifted) — call \`mcp__revu__report_finding\` for the NEW location with \`priorFp\` set to the prior fingerprint.
+
+Then, additionally, scan the diff for GENUINELY new findings (not in the prior list) and \`report_finding\` for those with \`priorFp\` unset.
+
+## Prior findings JSON
+
+\`\`\`json
+${JSON.stringify(slim, null, 2)}
+\`\`\`
+
 `;
 }
 

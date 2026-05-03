@@ -35,6 +35,7 @@ export interface CliOverrides {
   force?: boolean;
   config?: string;
   timeoutMs?: number;
+  priorReport?: string;
 }
 
 export function loadConfig(repoRoot: string, overrides: CliOverrides): RevuConfig {
@@ -67,6 +68,7 @@ export function loadConfig(repoRoot: string, overrides: CliOverrides): RevuConfi
   if (overrides.outputFile !== undefined) merged.outputFile = overrides.outputFile;
   if (overrides.force !== undefined) merged.force = overrides.force;
   if (overrides.timeoutMs !== undefined) merged.timeoutMs = overrides.timeoutMs;
+  if (overrides.priorReport !== undefined) merged.priorReport = overrides.priorReport;
   if (overrides.failOn !== undefined) {
     if (!SEVERITIES.has(overrides.failOn as Severity)) {
       throw new Error(

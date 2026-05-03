@@ -1,13 +1,21 @@
-import type { Finding, Severity } from "../types.js";
+import type { Finding, Resolution, Severity } from "../types.js";
 
 export class FindingsAggregator {
   private byRule = new Map<string, Finding[]>();
   private dedupKeys = new Set<string>();
   private listeners = new Set<(f: Finding) => void>();
+  private resolutionsByRule = new Map<string, Resolution[]>();
+  private resolutionDedupKeys = new Set<string>();
+  private resolutionListeners = new Set<(r: Resolution) => void>();
 
   onAdd(listener: (f: Finding) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  onResolution(listener: (r: Resolution) => void): () => void {
+    this.resolutionListeners.add(listener);
+    return () => this.resolutionListeners.delete(listener);
   }
 
   add(finding: Finding): boolean {
@@ -24,13 +32,39 @@ export class FindingsAggregator {
     return true;
   }
 
+  /** Record that a prior finding was resolved by the agent. */
+  markResolved(ruleId: string, fingerprint: string, reason: "fixed" | "stale", resolvedAtSha = ""): boolean {
+    const key = `${ruleId}\0${fingerprint}`;
+    if (this.resolutionDedupKeys.has(key)) return false;
+    this.resolutionDedupKeys.add(key);
+
+    const resolution: Resolution = { ruleId, fingerprint, reason, resolvedAtSha };
+    const list = this.resolutionsByRule.get(ruleId);
+    if (list) list.push(resolution);
+    else this.resolutionsByRule.set(ruleId, [resolution]);
+    for (const l of this.resolutionListeners) {
+      try { l(resolution); } catch { /* same robustness as add() */ }
+    }
+    return true;
+  }
+
   countFor(ruleId: string): number {
     return this.byRule.get(ruleId)?.length ?? 0;
+  }
+
+  resolutionsFor(ruleId: string): Resolution[] {
+    return this.resolutionsByRule.get(ruleId) ?? [];
   }
 
   all(): Finding[] {
     const out: Finding[] = [];
     for (const list of this.byRule.values()) out.push(...list);
+    return out;
+  }
+
+  allResolutions(): Resolution[] {
+    const out: Resolution[] = [];
+    for (const list of this.resolutionsByRule.values()) out.push(...list);
     return out;
   }
 

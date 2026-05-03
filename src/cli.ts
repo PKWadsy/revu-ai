@@ -154,6 +154,7 @@ program
   .option("--output-file <path>", "additionally write output to a file")
   .option("--fail-on <severity>", "exit non-zero threshold (default: high)")
   .option("--timeout-ms <ms>", "per-rule wall-clock timeout in ms (default: 300000 = 5min); 0 disables", parseIntOpt0Allowed)
+  .option("--prior-report <path>", "Prior --output-file report; reviewer agents see open prior findings as context")
   .option("--force", "ignore the no-changes pre-flight skip")
   .option("--config <path>", "config file path")
   .action(async (opts: CliOverrides) => {
@@ -162,6 +163,21 @@ program
     const cfg = loadConfig(repoRoot, opts);
     try {
       const showProgress = process.stderr.isTTY && !process.env.REVU_DEBUG;
+
+      // Optionally read the prior-run report to enable cross-run reasoning.
+      let priorReportObj: import("./types.js").RunReport | undefined;
+      if (cfg.priorReport) {
+        try {
+          const fs = await import("node:fs");
+          priorReportObj = JSON.parse(fs.readFileSync(cfg.priorReport, "utf8")) as import("./types.js").RunReport;
+        } catch (e) {
+          const code = (e as NodeJS.ErrnoException).code;
+          if (code !== "ENOENT") throw e;
+          // Missing prior file is normal on the first run; just proceed without one.
+          priorReportObj = undefined;
+        }
+      }
+
       const { report, exitCode } = await run(cwd, cfg, {
         onRuleStart: (id) =>
           process.stderr.write(`${paint("cyan", "▶")} ${paint("bold", id)}\n`),
@@ -206,7 +222,7 @@ program
           }
           process.stderr.write(`  ${paint("bold", r.id)} ${status} ${dur}\n`);
         },
-      });
+      }, { ...(priorReportObj ? { priorReport: priorReportObj } : {}) });
 
       const fmt = cfg.output === "auto" ? (process.stdout.isTTY ? "pretty" : "json") : cfg.output;
       const outFile = cfg.outputFile;
@@ -254,6 +270,81 @@ function parseIntOpt(value: string): number {
   if (!Number.isFinite(n) || n <= 0) throw new Error(`Invalid integer: ${value}`);
   return n;
 }
+
+const SEVERITIES_LIST = ["aesthetic", "low", "medium", "high", "critical"] as const;
+type SeverityFlag = (typeof SEVERITIES_LIST)[number];
+function parseSeverityOpt(value: string): SeverityFlag {
+  if ((SEVERITIES_LIST as readonly string[]).includes(value)) return value as SeverityFlag;
+  throw new Error(`Invalid severity "${value}". Expected one of: ${SEVERITIES_LIST.join(", ")}`);
+}
+
+function registerForgeCommands(program: Command): void {
+  for (const forgeName of ["github", "gitlab"] as const) {
+    const group = program.command(forgeName).description(`${forgeName} forge integration`);
+    group
+      .command("post")
+      .description(
+        forgeName === "github"
+          ? "Post a revu-ai run report as a PR review with bundled inline comments"
+          : `Post a revu-ai run report to ${forgeName} (not yet implemented)`,
+      )
+      .requiredOption("--report <path>", "JSON report from `revu-ai --output json --output-file ...` (use `-` for stdin)")
+      .option("--prior-report <path>", "Prior run's --output-file (for cross-run dedup, resolutions, and PATCH-instead-of-POST)")
+      .option("--output-file <path>", "Write the augmented report (with new commentIds) here so the next run can use it as --prior-report")
+      .option("--pr <n>", "PR/MR number (default: parsed from CI env)")
+      .option("--repo <owner/repo>", "default: forge-specific env var")
+      .option("--commit-sha <sha>", "default: $GITHUB_SHA / equivalent")
+      .option("--token-env <NAME>", "env var holding the API token (default: GITHUB_TOKEN / etc.)")
+      .option("--request-changes <severity>", "submit as REQUEST_CHANGES if any new finding ≥ severity", parseSeverityOpt)
+      .option("--dry-run", "print the request body that would be POSTed; no network calls")
+      .action(async (opts: {
+        report: string;
+        priorReport?: string;
+        outputFile?: string;
+        pr?: string;
+        repo?: string;
+        commitSha?: string;
+        tokenEnv?: string;
+        requestChanges?: SeverityFlag;
+        dryRun?: boolean;
+      }) => {
+        const { runForgePost } = await import("./forges/post-cmd.js");
+        try {
+          const result = await runForgePost({
+            forge: forgeName,
+            reportPath: opts.report,
+            ...(opts.priorReport !== undefined ? { priorReportPath: opts.priorReport } : {}),
+            ...(opts.outputFile !== undefined ? { outputFile: opts.outputFile } : {}),
+            flags: {
+              ...(opts.pr !== undefined ? { pr: opts.pr } : {}),
+              ...(opts.repo !== undefined ? { repo: opts.repo } : {}),
+              ...(opts.commitSha !== undefined ? { commitSha: opts.commitSha } : {}),
+              ...(opts.tokenEnv !== undefined ? { tokenEnv: opts.tokenEnv } : {}),
+            },
+            ...(opts.requestChanges !== undefined ? { requestChangesAtOrAbove: opts.requestChanges } : {}),
+            dryRun: opts.dryRun ?? false,
+          });
+
+          // Emit a colored summary on stderr.
+          const headline = result.event === "request-changes"
+            ? `${paint("red", paint("bold", "✗"))} ${paint("bold", "request changes")}`
+            : `${paint("green", paint("bold", "✓"))} ${paint("bold", "review submitted")}`;
+          process.stderr.write(
+            `${headline} ${paint("dim", `(posts: ${result.inline.posted}, patches: ${result.patchesResolved + result.patchesMoved} [${result.patchesResolved} resolved + ${result.patchesMoved} moved])`)}\n`,
+          );
+          if (result.reviewUrl) process.stderr.write(`  ${paint("dim", result.reviewUrl)}\n`);
+
+          // Exit code: 1 when blocking (request-changes), 0 otherwise.
+          process.exit(result.event === "request-changes" ? 1 : 0);
+        } catch (e) {
+          process.stderr.write(`${paint("red", paint("bold", `revu-ai ${forgeName} post:`))} ${(e as Error).message}\n`);
+          process.exit(2);
+        }
+      });
+  }
+}
+
+registerForgeCommands(program);
 
 function parseIntOpt0Allowed(value: string): number {
   const n = Number.parseInt(value, 10);

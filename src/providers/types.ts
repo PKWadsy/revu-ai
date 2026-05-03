@@ -1,4 +1,4 @@
-import type { ReviewTarget } from "../types.js";
+import type { Finding, ReviewTarget } from "../types.js";
 
 export interface ReviewActivity {
   /** "tool" for tool-use, "text" for assistant prose. */
@@ -21,6 +21,11 @@ export interface ReviewInput {
   signal?: AbortSignal;
   /** Optional progress callback — providers should call this for tool use / text turns. */
   onActivity?: (activity: ReviewActivity) => void;
+  /** Open findings this same rule reported on a previous run, for cross-run reasoning. */
+  priorFindings?: Finding[];
+  /** SHA at which the prior findings were observed (the head of the previous run). Used in the
+   *  prior-findings prompt block to tell the agent the time delta to consider. */
+  priorHeadSha?: string;
 }
 
 export interface ReviewResult {

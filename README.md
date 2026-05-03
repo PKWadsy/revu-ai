@@ -138,9 +138,30 @@ The JSON shape is the stable contract for downstream tooling:
 }
 ```
 
-## GitHub Actions
+## Forge integrations
 
-A starter workflow lives at `examples/github-workflow.yml`. Drop it into `.github/workflows/revu-ai.yml` and add `ANTHROPIC_API_KEY` as a repo secret. With `--output github`, findings render as PR annotations.
+revu-ai is forge-agnostic. The first integration ships GitHub; GitLab and others slot in via the same interface (the CLI grammar is `revu-ai <forge> post`).
+
+### GitHub
+
+A starter workflow lives at `examples/github-workflow.yml`. Drop it into `.github/workflows/revu-ai.yml` and add `ANTHROPIC_API_KEY` as a repo secret. The workflow runs revu-ai, then `revu-ai github post` lands findings as **one bundled PR review** with threaded inline comments and a top-level summary — same UX as a human reviewer leaving a multi-comment review.
+
+Re-runs are idempotent: each comment carries a hidden marker, and findings already posted on the PR are skipped automatically. To make the PR check itself blocking, add `--request-changes high` to the post step — any high/critical finding then submits as `REQUEST_CHANGES`, which combines with branch protection to block merge.
+
+```bash
+revu-ai github post --report /tmp/revu.json [options]
+  --pr <n>                 PR number (default: parsed from $GITHUB_REF on pull_request events)
+  --repo <owner/repo>      default: $GITHUB_REPOSITORY
+  --commit-sha <sha>       default: $GITHUB_SHA
+  --token-env <NAME>       env var holding the token (default: GITHUB_TOKEN)
+  --request-changes <sev>  submit as REQUEST_CHANGES if any finding ≥ severity
+  --no-dedup               post everything; ignore existing bot comments
+  --dry-run                print the request body that would be POSTed; no network calls
+```
+
+### GitLab and others
+
+`revu-ai gitlab post` is reserved in the CLI but not yet implemented — the adapter throws a clear "not yet implemented" message until shipped. Bitbucket / Gitea / Forgejo will plug in via the same `ForgeAdapter` interface in `src/forges/types.ts`.
 
 ## Custom providers
 

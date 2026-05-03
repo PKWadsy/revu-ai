@@ -5,8 +5,16 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { isAbsolute, relative } from "node:path";
 import type { AddressInfo } from "node:net";
 import type { Finding } from "../types.js";
+import { ensureFingerprint } from "../findings.js";
 import { FindingsAggregator } from "./aggregator.js";
-import { ReportFindingShape, REPORT_FINDING_DESCRIPTION, type ReportFindingInput } from "./tools.js";
+import {
+  ReportFindingShape,
+  REPORT_FINDING_DESCRIPTION,
+  MarkResolvedShape,
+  MARK_RESOLVED_DESCRIPTION,
+  type ReportFindingInput,
+  type MarkResolvedInput,
+} from "./tools.js";
 
 export interface SidecarHandle {
   url: string;
@@ -107,7 +115,7 @@ function buildMcpServer(ruleId: string, ctx: HandlerCtx): McpServer {
         return errorResult("`lineEnd` must be >= `line`.");
       }
 
-      const finding: Finding = {
+      const finding: Finding = ensureFingerprint({
         ruleId,
         severity: args.severity,
         path: normalizePath(args.path, ctx.repoRoot),
@@ -115,7 +123,8 @@ function buildMcpServer(ruleId: string, ctx: HandlerCtx): McpServer {
         ...(args.line !== undefined ? { line: args.line } : {}),
         ...(args.lineEnd !== undefined ? { lineEnd: args.lineEnd } : {}),
         ...(args.category !== undefined ? { category: args.category } : {}),
-      };
+        ...(args.priorFp !== undefined ? { priorFp: args.priorFp } : {}),
+      });
       const accepted = ctx.aggregator.add(finding);
       return {
         content: [
@@ -124,6 +133,25 @@ function buildMcpServer(ruleId: string, ctx: HandlerCtx): McpServer {
             text: accepted
               ? `Recorded ${finding.severity} finding for ${finding.path}.`
               : `Duplicate finding for ${finding.path}; ignored.`,
+          },
+        ],
+      };
+    },
+  );
+
+  server.registerTool(
+    "mark_finding_resolved",
+    {
+      description: MARK_RESOLVED_DESCRIPTION,
+      inputSchema: MarkResolvedShape,
+    },
+    async (args: MarkResolvedInput) => {
+      ctx.aggregator.markResolved(ruleId, args.fingerprint, args.reason ?? "fixed");
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Recorded resolution for ${args.fingerprint} (${args.reason ?? "fixed"}).`,
           },
         ],
       };
