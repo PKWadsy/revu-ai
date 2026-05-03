@@ -1,0 +1,38 @@
+# Drop this into `.github/workflows/revu.yml` in any repo where you want
+# revu to run on PRs. Findings render as PR annotations because the `github`
+# formatter emits workflow commands.
+#
+# You'll need to set ANTHROPIC_API_KEY (or your provider's equivalent) as
+# a repository secret. The workflow uses --base origin/$BASE_REF so revu
+# reviews the full PR.
+name: revu
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write   # so annotations land on the PR
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Need full history so origin/<base> is available for the diff.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm install -g revu
+
+      - name: Run revu
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          git fetch origin "$BASE_REF":"refs/remotes/origin/$BASE_REF"
+          revu --base "origin/$BASE_REF" --output github --fail-on high
