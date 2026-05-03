@@ -40,3 +40,33 @@ export interface ReviewAgent {
 export interface ReviewAgentFactory {
   (cfg: { model?: string }): ReviewAgent;
 }
+
+export interface ScaffoldInput {
+  repoRoot: string;
+  /** If true, the agent may overwrite rule files it decides to (re)create. */
+  force: boolean;
+  timeoutMs?: number;
+  signal?: AbortSignal;
+  /** Same shape as the review path — useful for live progress streaming. */
+  onActivity?: (activity: ReviewActivity) => void;
+  /** Fires once per `.revu.md` file the agent successfully writes. */
+  onFileWritten?: (relPath: string) => void;
+}
+
+export interface ScaffoldResult {
+  ok: boolean;
+  durationMs: number;
+  /** Repo-relative paths of every `.revu.md` file the agent wrote. */
+  filesWritten: string[];
+  errorMessage?: string;
+  timedOut?: boolean;
+}
+
+export interface ScaffoldAgent {
+  readonly name: string;
+  run(input: ScaffoldInput): Promise<ScaffoldResult>;
+}
+
+export interface ScaffoldAgentFactory {
+  (cfg: { model?: string }): ScaffoldAgent;
+}

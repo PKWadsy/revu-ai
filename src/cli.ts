@@ -66,15 +66,75 @@ program
 
 program
   .command("init")
-  .description("Scaffold a starter .revu/ directory and revu.config.json")
-  .option("--dir <path>", "directory to drop rule files into", ".revu")
-  .option("--force", "overwrite existing files")
-  .action(async (opts: { dir: string; force?: boolean }) => {
-    const { runInit } = await import("./init.js");
-    const result = runInit({ cwd: process.cwd(), dir: opts.dir, force: opts.force });
-    for (const c of result.created) console.log(`created  ${c}`);
-    for (const s of result.skipped) console.log(`skipped  ${s} (already exists; pass --force to overwrite)`);
-    if (result.created.length === 0 && result.skipped.length > 0) process.exit(1);
+  .description("Spawn an agent to inspect the repo and scaffold curated .revu.md rule files")
+  .option("--force", "overwrite existing rule files in .revu/")
+  .option("--provider <name>", "scaffold provider (default: claude-code)")
+  .option("--model <id>", "model id passed to provider")
+  .option("--timeout-ms <ms>", "scaffold agent wall-clock timeout (default: 600000 = 10min)", parseIntOpt)
+  .action(async (opts: { force?: boolean; provider?: string; model?: string; timeoutMs?: number }) => {
+    const { runInit, InitRefusedError } = await import("./init.js");
+    const showProgress = process.stderr.isTTY && !process.env.REVU_DEBUG;
+    try {
+      const result = await runInit({
+        cwd: process.cwd(),
+        force: opts.force ?? false,
+        provider: opts.provider ?? "claude-code",
+        ...(opts.model !== undefined ? { model: opts.model } : {}),
+        timeoutMs: opts.timeoutMs ?? 600_000,
+        onStart: ({ repoRoot }) =>
+          process.stderr.write(`${paint("cyan", "▶")} ${paint("bold", "scaffolding rule files")} ${paint("dim", repoRoot)}\n`),
+        onActivity: showProgress
+          ? (a) => {
+              if (a.kind === "tool" && a.name === "Write") {
+                // Each Write gets its own "✱ created" line via onFileWritten — skip the dim activity.
+                return;
+              }
+              if (a.kind === "tool") {
+                process.stderr.write(`  ${paint("dim", "↳")} ${paint("cyan", a.name ?? "")}${paint("dim", `(${a.detail})`)}\n`);
+              } else if (a.detail) {
+                process.stderr.write(`  ${paint("dim", "…")} ${paint("dim", a.detail)}\n`);
+              }
+            }
+          : undefined,
+        onFileWritten: showProgress
+          ? (rel) =>
+              process.stderr.write(`  ${paint("bold", paint("green", "✱ created"))} ${paint("bold", rel)}\n`)
+          : undefined,
+      });
+
+      if (!result.ok) {
+        const label = result.timedOut ? "⏱ scaffold timed out" : "✗ scaffold failed";
+        const color = result.timedOut ? "yellow" : "red";
+        process.stderr.write(`${paint(color, paint("bold", label))} ${paint(color, result.errorMessage ?? "?")}\n`);
+        if (result.filesWritten.length > 0) {
+          process.stderr.write(`${paint("dim", `(${result.filesWritten.length} file(s) written before exit)`)}\n`);
+          for (const f of result.filesWritten) process.stderr.write(`  ${paint("dim", f)}\n`);
+        }
+        process.exit(2);
+      }
+
+      const globals = result.filesWritten.filter((f) => f.startsWith(".revu/")).sort();
+      const locals = result.filesWritten.filter((f) => !f.startsWith(".revu/")).sort();
+      process.stderr.write(
+        `${paint("bold", paint("green", "✓"))} ${paint("bold", String(result.filesWritten.length))} ${paint("dim", `rule file${result.filesWritten.length === 1 ? "" : "s"} created`)} ${paint("dim", `(${result.durationMs}ms)`)}\n`,
+      );
+      if (globals.length > 0) {
+        process.stderr.write(`  ${paint("bold", "globals")}\n`);
+        for (const f of globals) process.stderr.write(`    ${f}\n`);
+      }
+      if (locals.length > 0) {
+        process.stderr.write(`  ${paint("bold", "locals")}\n`);
+        for (const f of locals) process.stderr.write(`    ${f}\n`);
+      }
+      process.exit(0);
+    } catch (e) {
+      if (e instanceof InitRefusedError) {
+        process.stderr.write(`${paint("yellow", paint("bold", "revu init:"))} ${e.message.replace(/^revu init: /, "")}\n`);
+        process.exit(1);
+      }
+      process.stderr.write(`${paint("red", paint("bold", "revu init:"))} ${(e as Error).message}\n`);
+      process.exit(2);
+    }
   });
 
 program

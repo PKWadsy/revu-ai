@@ -1,73 +1,79 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join, relative, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { existsSync, readdirSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { findRepoRoot } from "./refs.js";
-
-const STARTERS = [
-  "dead-code.revu.md",
-  "contract-example.revu.md",
-] as const;
-
-const DEFAULT_REVU_CONFIG = {
-  pattern: "**/*.revu.md",
-  provider: "claude-code",
-  failOn: "high",
-  output: "auto",
-};
+import { getScaffoldFactory } from "./providers/registry.js";
+import type { ReviewActivity } from "./providers/types.js";
 
 export interface InitOptions {
   cwd: string;
-  dir: string;
-  force?: boolean;
+  /** Overwrite existing rule files. */
+  force: boolean;
+  provider: string;
+  model?: string;
+  timeoutMs: number;
+  onActivity?: (activity: ReviewActivity) => void;
+  onFileWritten?: (relPath: string) => void;
+  onStart?: (info: { repoRoot: string }) => void;
 }
 
 export interface InitResult {
-  created: string[];
-  skipped: string[];
+  ok: boolean;
+  repoRoot: string;
+  filesWritten: string[];
+  durationMs: number;
+  errorMessage?: string;
+  timedOut?: boolean;
 }
 
-export function runInit(opts: InitOptions): InitResult {
+export class InitRefusedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "InitRefusedError";
+  }
+}
+
+export async function runInit(opts: InitOptions): Promise<InitResult> {
   const repoRoot = findRepoRoot(opts.cwd);
-  const targetDir = resolve(repoRoot, opts.dir);
-  const created: string[] = [];
-  const skipped: string[] = [];
 
-  if (!existsSync(targetDir)) mkdirSync(targetDir, { recursive: true });
-
-  const examplesDir = locateExamplesDir();
-
-  for (const filename of STARTERS) {
-    const dest = join(targetDir, filename);
-    if (existsSync(dest) && !opts.force) {
-      skipped.push(relative(repoRoot, dest));
-      continue;
+  if (!opts.force) {
+    const existing = listExistingGlobalRules(repoRoot);
+    if (existing.length > 0) {
+      throw new InitRefusedError(
+        `revu init: \`.revu/\` already contains rule files (${existing.join(", ")}). Pass --force to overwrite.`,
+      );
     }
-    const src = join(examplesDir, filename);
-    writeFileSync(dest, readFileSync(src, "utf8"), "utf8");
-    created.push(relative(repoRoot, dest));
   }
 
-  const configPath = resolve(repoRoot, "revu.config.json");
-  if (existsSync(configPath) && !opts.force) {
-    skipped.push(relative(repoRoot, configPath));
-  } else {
-    writeFileSync(configPath, JSON.stringify(DEFAULT_REVU_CONFIG, null, 2) + "\n", "utf8");
-    created.push(relative(repoRoot, configPath));
-  }
+  opts.onStart?.({ repoRoot });
 
-  return { created, skipped };
+  const factory = getScaffoldFactory(opts.provider);
+  const agent = factory({ ...(opts.model ? { model: opts.model } : {}) });
+
+  const result = await agent.run({
+    repoRoot,
+    force: opts.force,
+    timeoutMs: opts.timeoutMs,
+    ...(opts.onActivity ? { onActivity: opts.onActivity } : {}),
+    ...(opts.onFileWritten ? { onFileWritten: opts.onFileWritten } : {}),
+  });
+
+  return {
+    ok: result.ok,
+    repoRoot,
+    filesWritten: result.filesWritten,
+    durationMs: result.durationMs,
+    ...(result.errorMessage ? { errorMessage: result.errorMessage } : {}),
+    ...(result.timedOut ? { timedOut: true } : {}),
+  };
 }
 
-function locateExamplesDir(): string {
-  // Resolve relative to this compiled module: dist/init.js → ../examples/.revu (when packaged)
-  // and src/init.ts → ../examples/.revu (when run via tsx).
-  const here = dirname(fileURLToPath(import.meta.url));
-  const candidates = [
-    resolve(here, "..", "examples", ".revu"),       // dist/ or src/ → ../examples/.revu
-    resolve(here, "..", "..", "examples", ".revu"), // safety net
-  ];
-  for (const c of candidates) {
-    if (existsSync(c)) return c;
+/** Returns the *.revu.md filenames already present in `<repoRoot>/.revu/`, or []. */
+function listExistingGlobalRules(repoRoot: string): string[] {
+  const dir = resolve(repoRoot, ".revu");
+  if (!existsSync(dir)) return [];
+  try {
+    return readdirSync(dir).filter((n) => n.endsWith(".revu.md")).map((n) => join(".revu", n));
+  } catch {
+    return [];
   }
-  throw new Error("revu init: could not locate bundled example rule files");
 }

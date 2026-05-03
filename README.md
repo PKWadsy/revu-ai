@@ -18,14 +18,14 @@ Set `ANTHROPIC_API_KEY` in your environment.
 
 ```bash
 cd my-project
-revu init             # drops .revu/ with starter rules + revu.config.json
+revu init             # spawn an agent to inspect the repo and scaffold rule files
 revu list             # show what would be reviewed
 revu                  # run it
 ```
 
-`revu init` ships two starters under `.revu/`:
-- `dead-code.revu.md` — flag newly-introduced dead exports / files
-- `contract-example.revu.md` — template for feature-contract enforcement
+`revu init` spawns a Claude agent that inspects your repo (CLAUDE.md, README, manifests, lint configs, top-level structure) and writes a curated set of `.revu.md` files. Globals go in `.revu/<topic>.revu.md`; rules scoped to a sub-service go alongside it (e.g. `services/auth/openapi.revu.md`). The agent searches for *implicit contracts* first — places where two parts of the codebase must be kept in sync but the type system doesn't enforce it — because those are the highest-value rules.
+
+The agent is opinionated: language-aware (uses your project's actual logger / docstring style / convention idioms), refuses to restate things your linter and type-checker already enforce, and writes one concern per file. Re-run with `--force` to overwrite. Calibrate the wall-clock cap with `--timeout-ms` (default 10min).
 
 ## Writing rule files
 

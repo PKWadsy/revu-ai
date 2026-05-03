@@ -1,12 +1,18 @@
+import { isAbsolute, relative, resolve } from "node:path";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 import { buildSystemPrompt } from "../prompts/review-system.js";
 import { buildUserPrompt } from "../prompts/review-user.js";
+import { buildInitSystemPrompt } from "../prompts/init-system.js";
+import { buildInitUserPrompt } from "../prompts/init-user.js";
 import type {
   ReviewActivity,
   ReviewAgent,
   ReviewAgentFactory,
   ReviewInput,
   ReviewResult,
+  ScaffoldAgentFactory,
+  ScaffoldInput,
+  ScaffoldResult,
 } from "./types.js";
 
 const ALWAYS_ALLOWED_TOOLS = [
@@ -299,6 +305,9 @@ function summarizeToolInput(name: string, input: unknown): string {
   if (name === "Glob" && typeof i["pattern"] === "string") {
     return i["pattern"] as string;
   }
+  if (name === "Write" && typeof i["file_path"] === "string") {
+    return i["file_path"] as string;
+  }
   if (name.startsWith("mcp__")) {
     // Most useful for our own report_finding tool.
     if (typeof i["severity"] === "string" && typeof i["path"] === "string") {
@@ -314,3 +323,187 @@ function summarizeToolInput(name: string, input: unknown): string {
     return "";
   }
 }
+
+/**
+ * The scaffold agent is allowed to call `Write`, but only on `.revu.md` files
+ * that resolve to a path inside the repo root. Anything else is denied.
+ */
+export function isAllowedRuleFileWrite(repoRoot: string, filePath: unknown): boolean {
+  if (typeof filePath !== "string" || filePath.length === 0) return false;
+  if (!/\.revu\.md$/.test(filePath)) return false;
+  const abs = isAbsolute(filePath) ? filePath : resolve(repoRoot, filePath);
+  const rel = relative(resolve(repoRoot), abs);
+  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) return false;
+  return true;
+}
+
+const SCAFFOLD_TOOLSET = ["Read", "Grep", "Glob", "Bash", "Write"];
+const SCAFFOLD_ALWAYS_ALLOWED = ["Read", "Grep", "Glob"];
+
+export const claudeCodeScaffoldProvider: ScaffoldAgentFactory = (cfg) => ({
+  name: "claude-code",
+  async run(input: ScaffoldInput): Promise<ScaffoldResult> {
+    const start = Date.now();
+    const abort = new AbortController();
+    if (input.signal) {
+      input.signal.addEventListener("abort", () => abort.abort(), { once: true });
+    }
+
+    let timedOut = false;
+    const timer = input.timeoutMs && input.timeoutMs > 0
+      ? setTimeout(() => {
+          timedOut = true;
+          abort.abort();
+        }, input.timeoutMs)
+      : undefined;
+
+    const filesWritten: string[] = [];
+
+    try {
+      const q = query({
+        prompt: buildInitUserPrompt({ repoRoot: input.repoRoot, force: input.force }),
+        options: {
+          cwd: input.repoRoot,
+          ...(cfg.model ? { model: cfg.model } : {}),
+          systemPrompt: buildInitSystemPrompt({ force: input.force }),
+          tools: SCAFFOLD_TOOLSET,
+          allowedTools: SCAFFOLD_ALWAYS_ALLOWED,
+          canUseTool: async (toolName, toolInput) => {
+            if (toolName === "Bash") {
+              const command = typeof toolInput["command"] === "string" ? (toolInput["command"] as string) : "";
+              if (isReadOnlyShellCommand(command)) {
+                return { behavior: "allow", updatedInput: toolInput };
+              }
+              return {
+                behavior: "deny",
+                message: `Bash command rejected for safety: scaffold may only run read-only commands. Got: ${truncate(command, 200)}`,
+              };
+            }
+            if (toolName === "Write") {
+              if (isAllowedRuleFileWrite(input.repoRoot, toolInput["file_path"])) {
+                return { behavior: "allow", updatedInput: toolInput };
+              }
+              return {
+                behavior: "deny",
+                message:
+                  "scaffold may only Write `.revu.md` files inside the repository. Refusing this path. " +
+                  "Globals go in `.revu/<topic>.revu.md`; locals go alongside the thing they cover as `<dir>/<topic>.revu.md`.",
+              };
+            }
+            if (toolName === "Edit" || toolName === "MultiEdit" || toolName === "NotebookEdit") {
+              return {
+                behavior: "deny",
+                message: `scaffold must use Write (not ${toolName}) when creating rule files.`,
+              };
+            }
+            return { behavior: "allow", updatedInput: toolInput };
+          },
+          permissionMode: "default",
+          settingSources: [],
+          persistSession: false,
+          abortController: abort,
+          stderr: (data: string) => {
+            if (process.env.REVU_DEBUG) {
+              process.stderr.write(`[scaffold] ${data}`);
+            }
+          },
+        },
+      });
+
+      let resultErrorMessage: string | undefined;
+
+      try {
+        for await (const msg of q) {
+          const m = msg as {
+            type?: string;
+            subtype?: string;
+            errors?: string[];
+            is_error?: boolean;
+            result?: string;
+            num_turns?: number;
+            message?: { content?: unknown };
+          };
+          if (process.env.REVU_DEBUG) {
+            if (m.type === "result") {
+              process.stderr.write(
+                `[scaffold] RESULT subtype=${m.subtype} is_error=${m.is_error} num_turns=${m.num_turns} errors=${JSON.stringify(m.errors)} result=${JSON.stringify(m.result)?.slice(0, 600)}\n`,
+              );
+            } else if (m.type === "assistant") {
+              process.stderr.write(
+                `[scaffold] ASSISTANT content=${JSON.stringify(m.message?.content)?.slice(0, 800)}\n`,
+              );
+            } else {
+              process.stderr.write(`[scaffold] msg.type=${m.type}\n`);
+            }
+          }
+          if (m.type === "assistant") {
+            // Stream activity AND notice successful Write tool_use blocks so we can
+            // record what got written and emit live "✱ created ..." lines.
+            const content = m.message?.content;
+            if (Array.isArray(content)) {
+              for (const block of content as Array<{ type?: string; name?: string; input?: unknown }>) {
+                if (block.type === "tool_use" && block.name === "Write") {
+                  const fp = (block.input as { file_path?: unknown } | undefined)?.file_path;
+                  if (typeof fp === "string" && isAllowedRuleFileWrite(input.repoRoot, fp)) {
+                    const abs = isAbsolute(fp) ? fp : resolve(input.repoRoot, fp);
+                    const rel = relative(resolve(input.repoRoot), abs).split("\\").join("/");
+                    filesWritten.push(rel);
+                    input.onFileWritten?.(rel);
+                  }
+                }
+              }
+            }
+            if (input.onActivity) emitAssistantActivity(content, input.onActivity);
+          }
+          if (m.type === "result" && (m.is_error || m.subtype !== "success")) {
+            const text = m.result ?? m.errors?.join("; ") ?? "unknown error";
+            resultErrorMessage = m.subtype === "success"
+              ? text
+              : `${m.subtype ?? "error"}: ${text}`;
+          }
+        }
+      } catch (streamErr) {
+        if (!resultErrorMessage) {
+          resultErrorMessage = (streamErr as Error).message ?? String(streamErr);
+        }
+      }
+
+      if (timedOut) {
+        return {
+          ok: false,
+          durationMs: Date.now() - start,
+          filesWritten,
+          errorMessage: `timed out after ${input.timeoutMs}ms`,
+          timedOut: true,
+        };
+      }
+      if (resultErrorMessage) {
+        return {
+          ok: false,
+          durationMs: Date.now() - start,
+          filesWritten,
+          errorMessage: resultErrorMessage,
+        };
+      }
+      return { ok: true, durationMs: Date.now() - start, filesWritten };
+    } catch (e) {
+      if (timedOut) {
+        return {
+          ok: false,
+          durationMs: Date.now() - start,
+          filesWritten,
+          errorMessage: `timed out after ${input.timeoutMs}ms`,
+          timedOut: true,
+        };
+      }
+      return {
+        ok: false,
+        durationMs: Date.now() - start,
+        filesWritten,
+        errorMessage: (e as Error).message ?? String(e),
+      };
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  },
+});
