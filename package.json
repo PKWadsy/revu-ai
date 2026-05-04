@@ -1,6 +1,6 @@
 {
   "name": "revu-ai",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Parallel AI code review with per-rule Claude agents",
   "type": "module",
   "bin": {
