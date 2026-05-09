@@ -184,9 +184,23 @@ export const opencodeProvider: ReviewAgentFactory = (cfg: OpencodeConfig) => ({
       if (timedOut) {
         return timeoutResult(input.ruleId, start, input.timeoutMs);
       }
-      const err = promptResp.data?.info.error;
-      if (err) {
-        return errorResult(input.ruleId, start, formatOpencodeError(err));
+      // hey-api wraps non-2xx in `error`; 2xx populates `data`. opencode can
+      // also return a 2xx with an unexpected shape (data without info) when
+      // the server crashes mid-prompt — guard every hop instead of just the
+      // first.
+      if (promptResp.error) {
+        return errorResult(input.ruleId, start, formatOpencodeError(promptResp.error));
+      }
+      const info = promptResp.data?.info;
+      if (!info) {
+        return errorResult(
+          input.ruleId,
+          start,
+          "opencode returned no message info — server may have errored mid-prompt",
+        );
+      }
+      if (info.error) {
+        return errorResult(input.ruleId, start, formatOpencodeError(info.error));
       }
       void server;
       return { ruleId: input.ruleId, ok: true, durationMs: Date.now() - start };
@@ -286,9 +300,20 @@ export const opencodeScaffoldProvider: ScaffoldAgentFactory = (cfg: OpencodeConf
       if (timedOut) {
         return scaffoldTimeoutResult(start, filesWritten, input.timeoutMs);
       }
-      const err = promptResp.data?.info.error;
-      if (err) {
-        return scaffoldError(start, filesWritten, formatOpencodeError(err));
+      // Same defensive shape as the review path — see opencodeProvider.run.
+      if (promptResp.error) {
+        return scaffoldError(start, filesWritten, formatOpencodeError(promptResp.error));
+      }
+      const info = promptResp.data?.info;
+      if (!info) {
+        return scaffoldError(
+          start,
+          filesWritten,
+          "opencode returned no message info — server may have errored mid-prompt",
+        );
+      }
+      if (info.error) {
+        return scaffoldError(start, filesWritten, formatOpencodeError(info.error));
       }
       return { ok: true, durationMs: Date.now() - start, filesWritten };
     } catch (e) {

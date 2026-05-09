@@ -72,10 +72,13 @@ jobs:
           if [ -f /tmp/revu-prior.json ]; then
             PRIOR_FLAG="--prior-report /tmp/revu-prior.json"
           fi
-          # Concurrency 2 is conservative; xAI's published rate limits are more
-          # generous than Anthropic Tier 1, so this can be bumped if reviews
-          # feel slow. grok-4-1-fast-reasoning has a 2M-token context, so
-          # large-file Reads are not a concern under this harness.
+          # Concurrency 1 (not the bottleneck we'd like): each opencode server
+          # writes to a shared sqlite db at ~/.local/share/opencode/, and
+          # parallel `PRAGMA journal_mode = WAL` calls during fan-out collide
+          # with "database is locked". Bumping back up needs per-rule data
+          # isolation (likely XDG_DATA_HOME per process) — tracked separately.
+          # grok-4-1-fast-reasoning has a 2M-token context, so large-file
+          # Reads are not a concern under this harness.
           node dist/cli.js \
             --harness opencode \
             --provider x-ai \
@@ -83,7 +86,7 @@ jobs:
             --base "origin/$BASE_REF" \
             --output json \
             --output-file /tmp/revu.json \
-            --concurrency 2 \
+            --concurrency 1 \
             --timeout-ms 600000 \
             $PRIOR_FLAG
 
