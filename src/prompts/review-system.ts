@@ -44,6 +44,7 @@ Severity guidance:
 - Do NOT modify any files.
 - Do NOT report findings outside the scope of the <rules> below.
 - Do NOT include a final summary or commentary about what you reviewed; just call tools and stop. The runner doesn't read your text output.
+- Do NOT delegate to subagents (no \`task\` / \`Task\` tool, no agent dispatch). Run every \`git\`, \`Read\`, \`Grep\`, \`Glob\` call yourself in this session — subagent calls run silently to the runner's progress log, give the impression of a stuck agent, and cost extra tokens for no review benefit. The single rule scope is small enough to review directly.
 - If you find nothing, just stop. No "all clear" message needed.
 ${priorBlock}
 <rules>

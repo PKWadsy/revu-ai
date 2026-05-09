@@ -98,29 +98,50 @@ export async function run(cwd: string, config: RevuConfig, hooks: RunHooks = {},
         limit(async () => {
           hooks.onRuleStart?.(rule.ruleId, rule.relPath);
           const priorForRule = priorByRule.get(rule.ruleId);
-          const result = await provider.run({
-            ruleId: rule.ruleId,
-            rulesFilePath: rule.absPath,
-            rulesContent: rule.content,
-            reviewTarget: resolved.target,
-            repoRoot,
-            mcp: { url: sidecar.url, authToken: sidecar.authToken },
-            timeoutMs: config.timeoutMs,
-            ...(hooks.onActivity
-              ? { onActivity: (a) => hooks.onActivity?.(rule.ruleId, a) }
-              : {}),
-            ...(priorForRule && priorForRule.length > 0 ? { priorFindings: priorForRule } : {}),
-            ...(priorHeadSha ? { priorHeadSha } : {}),
-          });
-          const ruleResult: RuleResult = {
-            id: result.ruleId,
-            path: rule.relPath,
-            ok: result.ok,
-            durationMs: result.durationMs,
-            findingCount: sidecar.aggregator.countFor(result.ruleId),
-            ...(result.errorMessage ? { errorMessage: result.errorMessage } : {}),
-            ...(result.timedOut ? { timedOut: true } : {}),
-          };
+          const ruleStart = Date.now();
+
+          // Per-rule isolation: a provider that throws (bug, runtime
+          // error, anything we didn't anticipate) must not abort the
+          // whole run. Catch here, convert to an errored RuleResult, and
+          // let the other rules finish. The provider's own contract is
+          // already to return ReviewResult with `ok:false` on expected
+          // failures — this is the safety net for unexpected ones.
+          let ruleResult: RuleResult;
+          try {
+            const result = await provider.run({
+              ruleId: rule.ruleId,
+              rulesFilePath: rule.absPath,
+              rulesContent: rule.content,
+              reviewTarget: resolved.target,
+              repoRoot,
+              mcp: { url: sidecar.url, authToken: sidecar.authToken },
+              timeoutMs: config.timeoutMs,
+              ...(hooks.onActivity
+                ? { onActivity: (a) => hooks.onActivity?.(rule.ruleId, a) }
+                : {}),
+              ...(priorForRule && priorForRule.length > 0 ? { priorFindings: priorForRule } : {}),
+              ...(priorHeadSha ? { priorHeadSha } : {}),
+            });
+            ruleResult = {
+              id: result.ruleId,
+              path: rule.relPath,
+              ok: result.ok,
+              durationMs: result.durationMs,
+              findingCount: sidecar.aggregator.countFor(result.ruleId),
+              ...(result.errorMessage ? { errorMessage: result.errorMessage } : {}),
+              ...(result.timedOut ? { timedOut: true } : {}),
+            };
+          } catch (e) {
+            const message = (e as Error)?.stack ?? (e as Error)?.message ?? String(e);
+            ruleResult = {
+              id: rule.ruleId,
+              path: rule.relPath,
+              ok: false,
+              durationMs: Date.now() - ruleStart,
+              findingCount: sidecar.aggregator.countFor(rule.ruleId),
+              errorMessage: `unexpected error: ${message.split("\n")[0]}`,
+            };
+          }
           ruleResults.push(ruleResult);
           hooks.onRuleEnd?.(ruleResult);
         }),

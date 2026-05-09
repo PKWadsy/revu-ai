@@ -57,6 +57,11 @@ const REVIEW_TOOL_OVERRIDES: Record<string, boolean> = {
   patch: false,
   todowrite: false,
   webfetch: false,
+  // Subagents (`task`) do their work in a separate opencode session whose
+  // events get muddled into the parent's stream — and they cost extra
+  // tokens for no review benefit at the rule's scope. The system prompt
+  // tells the model not to use them; this is the enforcement.
+  task: false,
 };
 
 const SCAFFOLD_TOOL_OVERRIDES: Record<string, boolean> = {
@@ -146,12 +151,29 @@ export const opencodeProvider: ReviewAgentFactory = (cfg: OpencodeConfig) => ({
     }
 
     let timedOut = false;
+    let stuck = false;
     const timer = input.timeoutMs && input.timeoutMs > 0
       ? setTimeout(() => {
           timedOut = true;
           abort.abort();
         }, input.timeoutMs)
       : undefined;
+
+    // Stuck detector: if no activity events arrive for 90 seconds, treat
+    // the agent as stuck and abort. opencode children can die silently —
+    // and with undici's per-fetch timeouts disabled, a half-open socket
+    // would otherwise wait until the wall-clock timeout. Reset on every
+    // event the SSE stream surfaces; fire when the gap grows too large.
+    const STUCK_TIMEOUT_MS = 90_000;
+    let stuckTimer: NodeJS.Timeout | undefined;
+    const armStuckTimer = (): void => {
+      if (stuckTimer) clearTimeout(stuckTimer);
+      stuckTimer = setTimeout(() => {
+        stuck = true;
+        abort.abort();
+      }, STUCK_TIMEOUT_MS);
+    };
+    armStuckTimer();
 
     const port = await getFreePort();
     const config: Config = {
@@ -204,7 +226,7 @@ export const opencodeProvider: ReviewAgentFactory = (cfg: OpencodeConfig) => ({
         return errorResult(input.ruleId, start, "opencode: failed to create session");
       }
 
-      const eventLoop = startEventLoop(client, sessionId, input, abort.signal);
+      const eventLoop = startEventLoop(client, sessionId, input, abort.signal, armStuckTimer);
 
       const promptResp = await client.session.prompt({
         path: { id: sessionId },
@@ -254,12 +276,14 @@ export const opencodeProvider: ReviewAgentFactory = (cfg: OpencodeConfig) => ({
       return { ruleId: input.ruleId, ok: true, durationMs: Date.now() - start };
     } catch (e) {
       if (timedOut) return timeoutResult(input.ruleId, start, input.timeoutMs);
+      if (stuck) return errorResult(input.ruleId, start, `stuck — no activity for ${STUCK_TIMEOUT_MS / 1000}s`);
       if (abort.signal.aborted) {
         return errorResult(input.ruleId, start, "opencode run aborted");
       }
       return errorResult(input.ruleId, start, formatThrown(e));
     } finally {
       if (timer) clearTimeout(timer);
+      if (stuckTimer) clearTimeout(stuckTimer);
       try { opencode?.server.close(); } catch { /* shutdown best-effort */ }
       isolated.cleanup();
     }
@@ -468,9 +492,10 @@ function startEventLoop(
   sessionId: string,
   input: ReviewInput,
   signal: AbortSignal,
+  onAnyEvent?: () => void,
 ): EventLoopHandle {
-  if (!input.onActivity) return { stop: () => {} };
   const onActivity = input.onActivity;
+  if (!onActivity && !onAnyEvent) return { stop: () => {} };
   let stopped = false;
 
   // opencode emits `message.part.updated` for every chunk of a tool's input
@@ -485,7 +510,8 @@ function startEventLoop(
       const sub = await client.event.subscribe({ signal });
       for await (const ev of sub.stream as AsyncIterable<Event>) {
         if (stopped) break;
-        emitActivityFromEvent(ev, sessionId, onActivity, announcedTools);
+        onAnyEvent?.();
+        if (onActivity) emitActivityFromEvent(ev, sessionId, onActivity, announcedTools);
       }
     } catch {
       /* event stream errors are non-fatal — they're cosmetic progress */
@@ -537,7 +563,12 @@ function emitActivityFromEvent(
 ): void {
   if (ev.type !== "message.part.updated") return;
   const part = ev.properties.part;
-  if (part.sessionID !== sessionId) return;
+  // Each opencode server is per-rule-isolated (own port, own XDG_DATA_HOME),
+  // so every event on this stream — main session OR any `task(...)` subagent
+  // session it spawned — belongs to this rule. Don't filter by sessionId; if
+  // we did, subagent tool calls would silently fall on the floor and the
+  // progress UI would look frozen while the subagent is grinding.
+  void sessionId;
 
   if (part.type === "tool") {
     if (announcedTools.has(part.callID)) return;
