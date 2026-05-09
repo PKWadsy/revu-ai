@@ -13,7 +13,7 @@ import type {
   PostResult,
   ResolveContextFlags,
 } from "../types.js";
-import { GitHubClient, type GhPostReviewBody } from "./api.js";
+import { GitHubApiError, GitHubClient, type GhPostReviewBody } from "./api.js";
 
 export const githubForgeFactory: ForgeAdapterFactory = () => new GitHubForgeAdapter();
 
@@ -100,9 +100,22 @@ export class GitHubForgeAdapter implements ForgeAdapter {
     }
 
     // Fetch the PR diff so we know which lines are inline-postable.
-    const diff = !options.dryRun
-      ? await client.getPullRequestDiff(context.repo.owner, context.repo.name, context.pr)
-      : "";
+    // GitHub returns 406 with `"too_large"` for PRs whose diff exceeds 20k
+    // lines — without a fallback the whole post step fails and the review
+    // never lands. Treat that case as "no inline anchoring available" and
+    // route every finding through the top-level review body instead.
+    let diff = "";
+    if (!options.dryRun) {
+      try {
+        diff = await client.getPullRequestDiff(context.repo.owner, context.repo.name, context.pr);
+      } catch (e) {
+        if (!isDiffTooLargeError(e)) throw e;
+        process.stderr.write(
+          `revu-ai github post: warning — PR diff too large for inline anchoring (GitHub 406 too_large; PRs >20k lines). ` +
+            `All ${plan.posts.length} new finding(s) will be posted in the top-level review body instead of inline.\n`,
+        );
+      }
+    }
     const diffMap = parseUnifiedDiff(diff);
 
     // Partition fresh posts into inline-eligible vs out-of-diff.
@@ -340,6 +353,16 @@ function resolvePrNumber(prFlag: string | undefined, env: NodeJS.ProcessEnv): nu
     }
   }
   return undefined;
+}
+
+/** GitHub returns 406 with the words "too large" / "too_large" in the body
+ *  when a PR's diff exceeds 20,000 lines. Detect by status + body text so a
+ *  generic 406 from some other endpoint doesn't get the silent-fallback
+ *  treatment. */
+function isDiffTooLargeError(e: unknown): boolean {
+  if (!(e instanceof GitHubApiError)) return false;
+  if (e.status !== 406) return false;
+  return /too[_ ]large/i.test(e.responseBody);
 }
 
 interface DryRunInfo {

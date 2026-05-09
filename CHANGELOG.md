@@ -2,6 +2,12 @@
 
 All notable changes to `revu-ai` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project's pre-1.0 versioning treats minor bumps as breaking-change boundaries.
 
+## 0.2.1 — 2026-05-09
+
+### Fixed
+
+- **`revu-ai github post` tolerates very large PRs.** GitHub's diff endpoint returns `406 too_large` for any PR whose unified diff exceeds 20,000 lines, which previously crashed the post step (`Process completed with exit code 2`) and left the review unposted. We now catch that specific error, log a warning, and fall back to routing every finding through the top-level review body (no inline anchoring). The review still lands; the only loss is per-line gutter pinning on huge PRs.
+
 ## 0.2.0 — 2026-05-09
 
 ### Breaking changes

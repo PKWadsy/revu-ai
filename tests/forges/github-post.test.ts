@@ -60,6 +60,9 @@ interface MockOptions {
   /** Comments returned by GET /reviews/{id}/comments after a review is created. */
   reviewCommentsForReview?: Array<{ id: number; body: string }>;
   patchResponse?: (commentId: number, body: { body: string }) => unknown;
+  /** When true, the diff fetch (GET /pulls/{n} with vnd.github.v3.diff) returns
+   *  GitHub's "too_large" 406 — simulates PRs whose diff exceeds 20k lines. */
+  diffTooLarge?: boolean;
 }
 
 function makeFetch(opts: MockOptions = {}): { fetchImpl: typeof fetch; calls: CallLog[] } {
@@ -83,6 +86,13 @@ function makeFetch(opts: MockOptions = {}): { fetchImpl: typeof fetch; calls: Ca
       return respond(200, opts.reviewCommentsForReview ?? []);
     }
     if (method === "GET" && url.includes("/pulls/") && accept.includes("vnd.github.v3.diff")) {
+      if (opts.diffTooLarge) {
+        return respond(406, {
+          message: "Sorry, the diff exceeded the maximum number of lines (20000)",
+          errors: [{ resource: "PullRequest", field: "diff", code: "too_large" }],
+          status: "406",
+        });
+      }
       return respond(200, FAKE_DIFF);
     }
     if (method === "GET" && url.includes("/pulls/")) {
@@ -177,6 +187,31 @@ describe("GitHubForgeAdapter.post", () => {
     const adapter = new GitHubForgeAdapter(fetchImpl);
     await adapter.post({ report: REPORT, context: CONTEXT, dryRun: true });
     expect(calls).toEqual([]);
+  });
+
+  it("falls back gracefully when GitHub returns 406 'too_large' for the PR diff (>20k lines)", async () => {
+    const { fetchImpl, calls } = makeFetch({ diffTooLarge: true });
+    const adapter = new GitHubForgeAdapter(fetchImpl);
+
+    const result = await adapter.post({
+      report: REPORT,
+      context: CONTEXT,
+      dryRun: false,
+    });
+
+    // The review still goes out — no exception thrown.
+    const post = calls.find((c) => c.method === "POST" && c.url.endsWith("/reviews"));
+    expect(post).toBeDefined();
+    expect(result.event).toBe("comment");
+
+    // With no diff parsable, every finding routes to the top-level body
+    // (out-of-diff section) instead of inline. The two findings in the
+    // fixture both end up there.
+    const reviewBody = post?.body as { comments: unknown[]; body: string };
+    expect(reviewBody.comments).toEqual([]);
+    expect(reviewBody.body).toContain("in diff");
+    expect(reviewBody.body).toContain("out of diff");
+    expect(result.inline.posted).toBe(0);
   });
 
   it("with prior — resolved finding triggers PATCH-strikethrough, no POST", async () => {

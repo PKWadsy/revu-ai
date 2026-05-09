@@ -1,6 +1,6 @@
 {
   "name": "revu-ai",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Parallel AI code review — pluggable agent harnesses (Claude Code, opencode); pick any provider/model",
   "type": "module",
   "bin": {
