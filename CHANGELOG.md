@@ -9,6 +9,7 @@ All notable changes to `revu-ai` are documented here. The format follows [Keep a
 - **`--provider` semantics changed.** The flag previously selected the agent harness (`claude-code`); that role moved to a new `--harness` flag. `--provider` is now the AI-provider field, only meaningful for harnesses that support multiple providers (currently `opencode`). Same renames in `revu.config.json` (`provider` → `harness`, plus a new optional `provider`).
 - The exported registry API renamed: `registerProvider` / `unregisterProvider` / `getProviderFactory` / `listProviders` → `registerHarness` / `unregisterHarness` / `getHarnessFactory` / `listHarnesses`. Plus the scaffold pair: `registerScaffoldProvider` → `registerScaffoldHarness`, `getScaffoldFactory` → `getScaffoldHarness`.
 - `RevuConfig.provider: string` → `RevuConfig.harness: string` with a new optional `RevuConfig.provider?: string`.
+- **`RunReport.schemaVersion` bumped from `1` to `2`.** The shape gains a required `Finding.fingerprint` (12-char sha256 prefix of `ruleId|path|line|message`), an optional `Finding.priorFp` for moved-finding correlation, an optional `Finding.commentId` populated by the github post step, and a top-level `resolutions: Resolution[]` array. Readers that consume `--output-file` JSON should accept v1 OR v2 (the post step does — see `src/forges/post-cmd.ts`).
 
 ### Added
 

@@ -330,8 +330,13 @@ function resolvePrNumber(prFlag: string | undefined, env: NodeJS.ProcessEnv): nu
       };
       if (typeof event.pull_request?.number === "number") return event.pull_request.number;
       if (typeof event.number === "number") return event.number;
-    } catch {
-      /* ignore */
+    } catch (e) {
+      // Corrupted/missing event file shouldn't kill the post step — caller
+      // can still pass `--pr` explicitly. But surface the cause so a bad CI
+      // env isn't silent.
+      process.stderr.write(
+        `revu-ai github post: warning — failed to parse $GITHUB_EVENT_PATH (${eventPath}): ${(e as Error).message ?? String(e)}\n`,
+      );
     }
   }
   return undefined;

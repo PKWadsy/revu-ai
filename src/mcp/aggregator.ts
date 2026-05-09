@@ -43,7 +43,7 @@ export class FindingsAggregator {
     if (list) list.push(resolution);
     else this.resolutionsByRule.set(ruleId, [resolution]);
     for (const l of this.resolutionListeners) {
-      try { l(resolution); } catch { /* same robustness as add() */ }
+      try { l(resolution); } catch { /* listener errors must not affect aggregation */ }
     }
     return true;
   }

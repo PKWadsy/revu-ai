@@ -1,5 +1,5 @@
 export { run, listRules, RevuExit } from "./runner.js";
-export type { RunnerResult, RunHooks } from "./runner.js";
+export type { RunnerResult, RunHooks, RunInputs } from "./runner.js";
 export {
   registerHarness,
   unregisterHarness,
