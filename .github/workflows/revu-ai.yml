@@ -3,6 +3,9 @@
 # Runs the version of revu-ai that is *in this PR* (built from source,
 # not the npm-published one) so every PR is reviewed by its own changes.
 #
+# Harness: opencode + xAI's `grok-4-1-fast-reasoning` (2M context, ~$0.20/M
+# input). The opencode binary must be on PATH; we install it from npm.
+#
 # Cross-run state: actions/cache restores the prior --output-file report
 # (so reviewers see their previous open findings as system-prompt context;
 # the post step PATCHes existing comments instead of always creating fresh
@@ -10,7 +13,7 @@
 # restore-keys prefix picks up whatever the most-recent prior cache was.
 #
 # Requires:
-#   - ANTHROPIC_API_KEY repository secret.
+#   - XAI_API_KEY repository secret.
 #   - At least one *.revu.md rule file in the repo (`.revu/...` for
 #     globals, or local rules next to the thing they cover).
 name: revu-ai
@@ -43,6 +46,10 @@ jobs:
 
       - run: pnpm build
 
+      # opencode harness needs the `opencode` binary on PATH.
+      - name: Install opencode CLI
+        run: npm install -g opencode-ai@latest
+
       - name: Restore prior revu-ai report
         uses: actions/cache@v4
         with:
@@ -57,7 +64,7 @@ jobs:
       # truthful red/green of this step's outcome.
       - name: Run revu-ai (built from source)
         env:
-          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
           BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: |
           git fetch origin "$BASE_REF":"refs/remotes/origin/$BASE_REF"
@@ -65,10 +72,14 @@ jobs:
           if [ -f /tmp/revu-prior.json ]; then
             PRIOR_FLAG="--prior-report /tmp/revu-prior.json"
           fi
-          # Tier 1 of the Anthropic API caps input tokens at 30k/minute. Seven
-          # parallel reviewer agents on a sizeable diff blow past that, so cap
-          # concurrency to 2 here. Bump back up after upgrading tier.
+          # Concurrency 2 is conservative; xAI's published rate limits are more
+          # generous than Anthropic Tier 1, so this can be bumped if reviews
+          # feel slow. grok-4-1-fast-reasoning has a 2M-token context, so
+          # large-file Reads are not a concern under this harness.
           node dist/cli.js \
+            --harness opencode \
+            --provider x-ai \
+            --model grok-4-1-fast-reasoning \
             --base "origin/$BASE_REF" \
             --output json \
             --output-file /tmp/revu.json \
