@@ -1,6 +1,9 @@
 import type { Finding, Severity } from "../types.js";
 import { fingerprint, withMarker } from "./dedup.js";
 
+// `Record<Severity, …>` makes `SEVERITIES` (in src/types.ts) the single source of
+// truth — adding a new severity there fails typecheck here until this map is
+// extended. Same pattern is reused for the cli's SEV_COLOR / SEV_LABEL maps.
 const SEV_BADGE: Record<Severity, string> = {
   aesthetic: "⚪ aesthetic",
   low: "🔵 low",

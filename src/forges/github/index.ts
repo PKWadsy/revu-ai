@@ -175,28 +175,37 @@ export class GitHubForgeAdapter implements ForgeAdapter {
       };
     }
 
-    // ---- Execute PATCHes (sequential to keep error handling simple) ----
+    // ---- Execute PATCHes (sequential; one failure does not abort the rest) ----
     const shortSha = context.headSha.slice(0, 7);
     const today = new Date().toISOString().slice(0, 10);
+    const patchFailures: { commentId: string | number; kind: "resolved" | "moved"; error: string }[] = [];
 
     for (const p of plan.patchesResolved) {
       const original = renderCommentBody(p.finding);
       const wrappedBody = wrapResolved(original, shortSha, today, p.reason);
-      await client.patchReviewComment(
-        context.repo.owner,
-        context.repo.name,
-        Number(p.commentId),
-        { body: wrappedBody },
-      );
+      try {
+        await client.patchReviewComment(
+          context.repo.owner,
+          context.repo.name,
+          Number(p.commentId),
+          { body: wrappedBody },
+        );
+      } catch (e) {
+        patchFailures.push({ commentId: p.commentId, kind: "resolved", error: (e as Error).message ?? String(e) });
+      }
     }
     for (const p of plan.patchesMoved) {
       const newBody = renderCommentBody(p.finding);
-      await client.patchReviewComment(
-        context.repo.owner,
-        context.repo.name,
-        Number(p.commentId),
-        { body: newBody },
-      );
+      try {
+        await client.patchReviewComment(
+          context.repo.owner,
+          context.repo.name,
+          Number(p.commentId),
+          { body: newBody },
+        );
+      } catch (e) {
+        patchFailures.push({ commentId: p.commentId, kind: "moved", error: (e as Error).message ?? String(e) });
+      }
     }
 
     // ---- POST a bundled review for new findings (if any) ----
@@ -207,23 +216,46 @@ export class GitHubForgeAdapter implements ForgeAdapter {
       reviewUrl = created.html_url;
 
       // Match new comments to their freshly-allocated GitHub ids by fingerprint marker.
+      // If listing fails (network blip etc.), continue with un-populated commentIds —
+      // the augmentedReport must still be returned so the next run's --prior-report
+      // can dedup; missing commentIds will resolve themselves on the next post.
       if (inline.length > 0) {
-        const created_comments = await client.listReviewCommentsForReview(
-          context.repo.owner,
-          context.repo.name,
-          context.pr,
-          created.id,
-        );
-        const fpToId = new Map<string, number>();
-        for (const c of created_comments) {
-          for (const fp of extractMarkers(c.body)) fpToId.set(fp, c.id);
-        }
-        for (const f of plan.outputFindings) {
-          if (f.commentId !== undefined) continue;
-          const id = fpToId.get(f.fingerprint);
-          if (id !== undefined) f.commentId = id;
+        try {
+          const created_comments = await client.listReviewCommentsForReview(
+            context.repo.owner,
+            context.repo.name,
+            context.pr,
+            created.id,
+          );
+          const fpToId = new Map<string, number>();
+          for (const c of created_comments) {
+            for (const fp of extractMarkers(c.body)) fpToId.set(fp, c.id);
+          }
+          for (const f of plan.outputFindings) {
+            if (f.commentId !== undefined) continue;
+            const id = fpToId.get(f.fingerprint);
+            if (id !== undefined) f.commentId = id;
+          }
+        } catch (e) {
+          process.stderr.write(
+            `revu-ai github post: warning — failed to backfill commentIds (${(e as Error).message ?? String(e)}). ` +
+              `The augmented report will be written without ids; the next run will rediscover them.\n`,
+          );
         }
       }
+    }
+
+    if (patchFailures.length > 0) {
+      const summary = patchFailures
+        .slice(0, 5)
+        .map((f) => `  - ${f.kind} #${f.commentId}: ${f.error}`)
+        .join("\n");
+      const more = patchFailures.length > 5 ? `\n  …and ${patchFailures.length - 5} more` : "";
+      process.stderr.write(
+        `revu-ai github post: warning — ${patchFailures.length} of ` +
+          `${plan.patchesResolved.length + plan.patchesMoved.length} PATCH call(s) failed:\n${summary}${more}\n` +
+          `The next run will retry via the prior-report dedup logic.\n`,
+      );
     }
 
     const augmented = augmentReport(report, plan.outputFindings, plan.outputResolutions);
@@ -232,8 +264,8 @@ export class GitHubForgeAdapter implements ForgeAdapter {
       ...(reviewUrl ? { reviewUrl } : {}),
       inline: { posted: inline.length, skipped: 0 },
       body: { posted: bodyPosted ? 1 : 0, skipped: 0 },
-      patchesResolved: plan.patchesResolved.length,
-      patchesMoved: plan.patchesMoved.length,
+      patchesResolved: plan.patchesResolved.length - patchFailures.filter((f) => f.kind === "resolved").length,
+      patchesMoved: plan.patchesMoved.length - patchFailures.filter((f) => f.kind === "moved").length,
       totalFindings,
       event,
       augmentedReport: augmented,

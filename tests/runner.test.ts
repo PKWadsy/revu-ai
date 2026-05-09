@@ -123,3 +123,105 @@ describe("runner", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe("runner — priorReport flow", () => {
+  it("groups prior findings by ruleId, filters resolved ones, surfaces resolutions", async () => {
+    // Capture what each mock agent receives, plus simulate resolving one prior finding.
+    const seen: Record<string, { priorFp: string[]; priorHeadSha?: string | undefined }> = {};
+    const captureProvider: ReviewAgentFactory = (): ReviewAgent => ({
+      name: "mock-prior",
+      async run(input: ReviewInput) {
+        seen[input.ruleId] = {
+          priorFp: (input.priorFindings ?? []).map((f) => f.fingerprint),
+          priorHeadSha: input.priorHeadSha,
+        };
+
+        const client = new Client({ name: "mock-agent", version: "0.0.1" });
+        const transport = new StreamableHTTPClientTransport(new URL(input.mcp.url), {
+          requestInit: {
+            headers: {
+              Authorization: `Bearer ${input.mcp.authToken}`,
+              "X-Revu-Rule-Id": input.ruleId,
+            },
+          },
+        });
+        try {
+          await client.connect(transport);
+          // alpha agent resolves its prior open finding; beta does nothing.
+          if (input.ruleId === ".revu/alpha" && input.priorFindings?.[0]) {
+            await client.callTool({
+              name: "mark_finding_resolved",
+              arguments: { fingerprint: input.priorFindings[0].fingerprint, reason: "fixed" },
+            });
+          }
+        } finally {
+          await client.close();
+        }
+        return { ruleId: input.ruleId, ok: true, durationMs: 1 };
+      },
+    });
+    registerHarness("mock-prior", captureProvider);
+
+    try {
+      const priorReport: import("../src/types.js").RunReport = {
+        schemaVersion: 2,
+        runId: "prev-run",
+        startedAt: new Date().toISOString(),
+        completedAt: new Date().toISOString(),
+        reviewTarget: {
+          mode: "ref-range",
+          base: "origin/main",
+          head: "HEAD",
+          baseSha: "0000000",
+          headSha: "deadbee",
+          changedFiles: ["src.ts"],
+          target: { mode: "ref-range", base: "origin/main", head: "HEAD" },
+        },
+        rules: [],
+        findings: [
+          // alpha: one open prior, one already-resolved-by-prior (must be filtered out).
+          { ruleId: ".revu/alpha", severity: "high", path: "src.ts", line: 1, message: "old-open", fingerprint: "alpha-open-fp" },
+          { ruleId: ".revu/alpha", severity: "low", path: "src.ts", line: 9, message: "already-resolved", fingerprint: "alpha-stale-fp" },
+          // beta: one open prior.
+          { ruleId: ".revu/beta", severity: "medium", path: "src.ts", line: 1, message: "beta-prior", fingerprint: "beta-open-fp" },
+        ],
+        resolutions: [
+          { ruleId: ".revu/alpha", fingerprint: "alpha-stale-fp", reason: "fixed", resolvedAtSha: "deadbee" },
+        ],
+      };
+
+      const { report } = await run(
+        dir,
+        {
+          pattern: "**/*.revu.md",
+          harness: "mock-prior",
+          workingTree: false,
+          staged: false,
+          output: "json",
+          failOn: "critical",
+          force: false,
+          timeoutMs: 60_000,
+        },
+        {},
+        { priorReport },
+      );
+
+      // alpha agent saw exactly the 1 open prior finding (the resolved one was filtered).
+      expect(seen[".revu/alpha"]?.priorFp).toEqual(["alpha-open-fp"]);
+      // beta agent saw its own prior finding, scoped per-rule.
+      expect(seen[".revu/beta"]?.priorFp).toEqual(["beta-open-fp"]);
+      // priorHeadSha threaded through to both agents.
+      expect(seen[".revu/alpha"]?.priorHeadSha).toBe("deadbee");
+      expect(seen[".revu/beta"]?.priorHeadSha).toBe("deadbee");
+
+      // The runner's output report records the new resolution emitted by alpha.
+      const alphaResolution = report.resolutions.find(
+        (r) => r.ruleId === ".revu/alpha" && r.fingerprint === "alpha-open-fp",
+      );
+      expect(alphaResolution).toBeDefined();
+      expect(alphaResolution?.reason).toBe("fixed");
+    } finally {
+      unregisterHarness("mock-prior");
+    }
+  });
+});

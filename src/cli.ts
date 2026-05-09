@@ -26,6 +26,9 @@ const c = {
 };
 type Color = keyof typeof c;
 const paint = (color: Color, s: string): string => (COLOR ? `${c[color]}${s}${c.reset}` : s);
+// `Record<Severity, …>` makes SEVERITIES the single source of truth — adding
+// a new severity in src/types.ts fails typecheck here until both maps are
+// extended. (See also: src/forges/render.ts's SEV_BADGE.)
 const SEV_COLOR: Record<Severity, Color> = {
   aesthetic: "gray",
   low: "blue",
