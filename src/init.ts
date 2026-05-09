@@ -1,14 +1,16 @@
 import { existsSync, readdirSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { findRepoRoot } from "./refs.js";
-import { getScaffoldFactory } from "./providers/registry.js";
+import { getScaffoldHarness } from "./providers/registry.js";
 import type { ReviewActivity } from "./providers/types.js";
 
 export interface InitOptions {
   cwd: string;
   /** Overwrite existing rule files. */
   force: boolean;
-  provider: string;
+  harness: string;
+  /** AI provider id, only meaningful for harnesses that support multiple (e.g. opencode). */
+  provider?: string;
   model?: string;
   timeoutMs: number;
   onActivity?: (activity: ReviewActivity) => void;
@@ -46,8 +48,11 @@ export async function runInit(opts: InitOptions): Promise<InitResult> {
 
   opts.onStart?.({ repoRoot });
 
-  const factory = getScaffoldFactory(opts.provider);
-  const agent = factory({ ...(opts.model ? { model: opts.model } : {}) });
+  const factory = getScaffoldHarness(opts.harness);
+  const agent = factory({
+    ...(opts.model ? { model: opts.model } : {}),
+    ...(opts.provider ? { provider: opts.provider } : {}),
+  });
 
   const result = await agent.run({
     repoRoot,

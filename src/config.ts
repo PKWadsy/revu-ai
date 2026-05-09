@@ -8,7 +8,7 @@ export const DEFAULT_CONFIG: RevuConfig = {
   pattern: "**/*.revu.md",
   workingTree: false,
   staged: false,
-  provider: "claude-code",
+  harness: "claude-code",
   output: "auto",
   failOn: "high",
   force: false,
@@ -20,6 +20,7 @@ export interface CliOverrides {
   workingTree?: boolean;
   staged?: boolean;
   pattern?: string;
+  harness?: string;
   provider?: string;
   model?: string;
   concurrency?: number;
@@ -55,6 +56,7 @@ export function loadConfig(repoRoot: string, overrides: CliOverrides): RevuConfi
   if (overrides.base !== undefined) merged.base = overrides.base;
   if (overrides.workingTree !== undefined) merged.workingTree = overrides.workingTree;
   if (overrides.staged !== undefined) merged.staged = overrides.staged;
+  if (overrides.harness !== undefined) merged.harness = overrides.harness;
   if (overrides.provider !== undefined) merged.provider = overrides.provider;
   if (overrides.model !== undefined) merged.model = overrides.model;
   if (overrides.concurrency !== undefined) merged.concurrency = overrides.concurrency;

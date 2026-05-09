@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { findRepoRoot, resolveTarget, isReviewEmpty } from "./refs.js";
 import { discoverRules } from "./discovery.js";
 import { startSidecar } from "./mcp/server.js";
-import { getProviderFactory } from "./providers/registry.js";
+import { getHarnessFactory } from "./providers/registry.js";
 import { createLimiter } from "./concurrency.js";
 import { SEVERITY_ORDER } from "./types.js";
 import type {
@@ -81,8 +81,11 @@ export async function run(cwd: string, config: RevuConfig, hooks: RunHooks = {},
   const unsubscribeFindings = hooks.onFinding
     ? sidecar.aggregator.onAdd(hooks.onFinding)
     : () => {};
-  const factory = getProviderFactory(config.provider);
-  const provider = factory({ ...(config.model ? { model: config.model } : {}) });
+  const factory = getHarnessFactory(config.harness);
+  const provider = factory({
+    ...(config.model ? { model: config.model } : {}),
+    ...(config.provider ? { provider: config.provider } : {}),
+  });
 
   const concurrency = config.concurrency ?? Math.min(8, rules.length);
   const limit = createLimiter(concurrency);

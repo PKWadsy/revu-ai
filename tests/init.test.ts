@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runInit, InitRefusedError } from "../src/init.js";
-import { registerScaffoldProvider, unregisterScaffoldProvider } from "../src/providers/registry.js";
+import { registerScaffoldHarness, unregisterScaffoldHarness } from "../src/providers/registry.js";
 import type { ScaffoldAgent, ScaffoldAgentFactory, ScaffoldInput } from "../src/providers/types.js";
 
 function git(cwd: string, ...args: string[]): string {
@@ -44,13 +44,13 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  unregisterScaffoldProvider("mock");
+  unregisterScaffoldHarness("mock");
   rmSync(dir, { recursive: true, force: true });
 });
 
 describe("runInit", () => {
   it("invokes the scaffold provider and reports filesWritten", async () => {
-    registerScaffoldProvider(
+    registerScaffoldHarness(
       "mock",
       makeMockScaffold({
         writes: [".revu/dead-code.revu.md", "services/auth/contract.revu.md"],
@@ -61,7 +61,7 @@ describe("runInit", () => {
     const result = await runInit({
       cwd: dir,
       force: false,
-      provider: "mock",
+      harness: "mock",
       timeoutMs: 1000,
       onFileWritten: (rel) => seen.push(rel),
     });
@@ -73,7 +73,7 @@ describe("runInit", () => {
   });
 
   it("refuses without --force when .revu/ already contains rule files", async () => {
-    registerScaffoldProvider("mock", makeMockScaffold({ writes: [] }));
+    registerScaffoldHarness("mock", makeMockScaffold({ writes: [] }));
     mkdirSync(join(dir, ".revu"), { recursive: true });
     writeFileSync(join(dir, ".revu", "existing.revu.md"), "# existing");
 
@@ -81,14 +81,14 @@ describe("runInit", () => {
       runInit({
         cwd: dir,
         force: false,
-        provider: "mock",
+        harness: "mock",
         timeoutMs: 1000,
       }),
     ).rejects.toBeInstanceOf(InitRefusedError);
   });
 
   it("proceeds when --force is set even if .revu/ is populated", async () => {
-    registerScaffoldProvider(
+    registerScaffoldHarness(
       "mock",
       makeMockScaffold({ writes: [".revu/dead-code.revu.md"] }),
     );
@@ -98,7 +98,7 @@ describe("runInit", () => {
     const result = await runInit({
       cwd: dir,
       force: true,
-      provider: "mock",
+      harness: "mock",
       timeoutMs: 1000,
     });
     expect(result.ok).toBe(true);
@@ -106,14 +106,14 @@ describe("runInit", () => {
   });
 
   it("surfaces errorMessage when the agent fails", async () => {
-    registerScaffoldProvider(
+    registerScaffoldHarness(
       "mock",
       makeMockScaffold({ writes: [], ok: false, errorMessage: "something broke" }),
     );
     const result = await runInit({
       cwd: dir,
       force: false,
-      provider: "mock",
+      harness: "mock",
       timeoutMs: 1000,
     });
     expect(result.ok).toBe(false);

@@ -53,6 +53,26 @@ Use this when reviewing prior findings provided in your system prompt: if the ne
 Do NOT use this tool for findings that are still open at the same location — just stay silent and the runner will keep them open.
 Do NOT use this tool for findings that have moved to a new location — instead emit a fresh \`report_finding\` with the prior fingerprint passed via \`priorFp\`.`;
 
+export const WriteRuleFileShape = {
+  path: z
+    .string()
+    .min(1)
+    .describe(
+      "Repo-relative path of the rule file to create. MUST end in `.revu.md`. Globals go in `.revu/<topic>.revu.md`; locals go alongside the thing they cover as `<dir>/<topic>.revu.md`.",
+    ),
+  content: z
+    .string()
+    .describe("Full Markdown content of the rule file."),
+} as const;
+
+export const WriteRuleFileObject = z.object(WriteRuleFileShape);
+export type WriteRuleFileInput = z.infer<typeof WriteRuleFileObject>;
+
+export const WRITE_RULE_FILE_DESCRIPTION = `Create a revu-ai rule file at the given repo-relative path.
+The path MUST end in \`.revu.md\` and resolve inside the repository (server enforces this; out-of-tree paths are rejected).
+Globals: \`.revu/<topic>.revu.md\`. Locals: \`<sub-service-dir>/<topic>.revu.md\` directly inside that directory.
+Use this instead of any built-in file-writing tool — only this path is safety-checked by revu-ai.`;
+
 export const REPORT_FINDING_DESCRIPTION = `Report a code-review finding to the revu-ai runner.
 Call this tool once for each issue you find. The runner aggregates findings across all reviewers.
 Severity guidance:

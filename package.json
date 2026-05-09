@@ -58,6 +58,7 @@
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.1.0",
     "@modelcontextprotocol/sdk": "^1.0.0",
+    "@opencode-ai/sdk": "^1.14.41",
     "commander": "^12.1.0",
     "fast-glob": "^3.3.2",
     "ignore": "^5.3.2",

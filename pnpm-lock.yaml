@@ -14,6 +14,9 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.0.0
         version: 1.29.0(zod@3.25.76)
+      '@opencode-ai/sdk':
+        specifier: ^1.14.41
+        version: 1.14.41
       commander:
         specifier: ^12.1.0
         version: 12.1.0
@@ -465,6 +468,9 @@ packages:
   '@nodelib/fs.walk@1.2.8':
     resolution: {integrity: sha512-oGB+UxlgWcgQkgwo8GcEGwemoTFt3FIO9ababBmaGwXIoBKZ+GTy0pP185beGg7Llih/NSHSV2XAs1lnznocSg==}
     engines: {node: '>= 8'}
+
+  '@opencode-ai/sdk@1.14.41':
+    resolution: {integrity: sha512-RYb2dCUv0TWIvBNnnO6ANbAPYri6rKuWizSoVFw/Pw+SCDj9ASHM5gAZ+jkskp8gYMfLLHe/Fpkun/9mr8m0IQ==}
 
   '@rollup/rollup-android-arm-eabi@4.60.2':
     resolution: {integrity: sha512-dnlp69efPPg6Uaw2dVqzWRfAWRnYVb1XJ8CyyhIbZeaq4CA5/mLeZ1IEt9QqQxmbdvagjLIm2ZL8BxXv5lH4Yw==}
@@ -1505,6 +1511,10 @@ snapshots:
     dependencies:
       '@nodelib/fs.scandir': 2.1.5
       fastq: 1.20.1
+
+  '@opencode-ai/sdk@1.14.41':
+    dependencies:
+      cross-spawn: 7.0.6
 
   '@rollup/rollup-android-arm-eabi@4.60.2':
     optional: true

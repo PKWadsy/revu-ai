@@ -6,7 +6,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { run } from "../src/runner.js";
-import { registerProvider, unregisterProvider } from "../src/providers/registry.js";
+import { registerHarness, unregisterHarness } from "../src/providers/registry.js";
 import type { ReviewAgent, ReviewAgentFactory, ReviewInput } from "../src/providers/types.js";
 
 function git(cwd: string, ...args: string[]): string {
@@ -65,7 +65,7 @@ beforeEach(() => {
   git(dir, "add", ".");
   git(dir, "commit", "-m", "feat");
 
-  registerProvider("mock", makeMockProvider({
+  registerHarness("mock", makeMockProvider({
     ".revu/alpha": [
       { severity: "high", path: "src.ts", line: 1, message: "alpha-finding" },
       { severity: "high", path: "src.ts", line: 1, message: "alpha-finding" }, // dup
@@ -77,7 +77,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
-  unregisterProvider("mock");
+  unregisterHarness("mock");
   rmSync(dir, { recursive: true, force: true });
 });
 
@@ -85,7 +85,7 @@ describe("runner", () => {
   it("orchestrates discovery, fan-out, and aggregation", async () => {
     const { report, exitCode } = await run(dir, {
       pattern: "**/*.revu.md",
-      provider: "mock",
+      harness: "mock",
       workingTree: false,
       staged: false,
       output: "json",
@@ -112,12 +112,13 @@ describe("runner", () => {
   it("returns exit code 0 when failOn threshold is not crossed", async () => {
     const { exitCode } = await run(dir, {
       pattern: "**/*.revu.md",
-      provider: "mock",
+      harness: "mock",
       workingTree: false,
       staged: false,
       output: "json",
       failOn: "critical",
       force: false,
+      timeoutMs: 60_000,
     });
     expect(exitCode).toBe(0);
   });

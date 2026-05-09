@@ -1,0 +1,484 @@
+import { createServer as createNetServer } from "node:net";
+import { createOpencode } from "@opencode-ai/sdk";
+import type { Config, Event } from "@opencode-ai/sdk";
+import { buildSystemPrompt } from "../prompts/review-system.js";
+import { buildUserPrompt } from "../prompts/review-user.js";
+import { buildInitSystemPrompt } from "../prompts/init-system.js";
+import { buildInitUserPrompt } from "../prompts/init-user.js";
+import { startSidecar } from "../mcp/server.js";
+import type {
+  ReviewActivity,
+  ReviewAgentFactory,
+  ReviewInput,
+  ReviewResult,
+  ScaffoldAgentFactory,
+  ScaffoldInput,
+  ScaffoldResult,
+} from "./types.js";
+
+/** opencode wants the model split as `{ providerID, modelID }`. revu's CLI
+ *  already takes them separately as --provider and --model. */
+interface OpencodeConfig {
+  provider?: string;
+  model?: string;
+}
+
+const REVIEW_TOOL_OVERRIDES: Record<string, boolean> = {
+  write: false,
+  edit: false,
+  multiedit: false,
+  patch: false,
+  todowrite: false,
+  webfetch: false,
+};
+
+const SCAFFOLD_TOOL_OVERRIDES: Record<string, boolean> = {
+  write: false,
+  edit: false,
+  multiedit: false,
+  patch: false,
+  webfetch: false,
+};
+
+const READ_ONLY_BASH: Record<string, "allow" | "deny"> = {
+  "git diff*": "allow",
+  "git log*": "allow",
+  "git show*": "allow",
+  "git status*": "allow",
+  "git ls-files*": "allow",
+  "git rev-parse*": "allow",
+  "git blame*": "allow",
+  "git config --get*": "allow",
+  "cat *": "allow",
+  "head *": "allow",
+  "tail *": "allow",
+  "ls*": "allow",
+  "wc *": "allow",
+  "find *": "allow",
+  "rg*": "allow",
+  "grep *": "allow",
+  "echo *": "allow",
+  "pwd*": "allow",
+  "stat *": "allow",
+  "file *": "allow",
+  "basename *": "allow",
+  "dirname *": "allow",
+  "*": "deny",
+};
+
+export const opencodeProvider: ReviewAgentFactory = (cfg: OpencodeConfig) => ({
+  name: "opencode",
+  async run(input: ReviewInput): Promise<ReviewResult> {
+    const start = Date.now();
+    const { providerID, modelID } = parseModel(cfg);
+
+    const abort = new AbortController();
+    if (input.signal) {
+      input.signal.addEventListener("abort", () => abort.abort(), { once: true });
+    }
+
+    let timedOut = false;
+    const timer = input.timeoutMs && input.timeoutMs > 0
+      ? setTimeout(() => {
+          timedOut = true;
+          abort.abort();
+        }, input.timeoutMs)
+      : undefined;
+
+    const port = await getFreePort();
+    const config: Config = {
+      mcp: {
+        revu: {
+          type: "remote",
+          url: input.mcp.url,
+          headers: {
+            Authorization: `Bearer ${input.mcp.authToken}`,
+            "X-Revu-Rule-Id": input.ruleId,
+          },
+          enabled: true,
+        },
+      },
+      permission: {
+        edit: "deny",
+        bash: READ_ONLY_BASH,
+        webfetch: "deny",
+      },
+    };
+
+    let opencode: Awaited<ReturnType<typeof createOpencode>> | undefined;
+    try {
+      opencode = await createOpencode({
+        port,
+        signal: abort.signal,
+        timeout: 30_000,
+        config,
+      });
+      const { client, server } = opencode;
+
+      const session = await client.session.create({ body: { title: `revu-${input.ruleId}` } });
+      const sessionId = session.data?.id;
+      if (!sessionId) {
+        return errorResult(input.ruleId, start, "opencode: failed to create session");
+      }
+
+      const eventLoop = startEventLoop(client, sessionId, input, abort.signal);
+
+      const promptResp = await client.session.prompt({
+        path: { id: sessionId },
+        body: {
+          model: { providerID, modelID },
+          system: buildSystemPrompt({
+            ruleId: input.ruleId,
+            rulesContent: input.rulesContent,
+            reviewTarget: input.reviewTarget,
+            ...(input.priorFindings ? { priorFindings: input.priorFindings } : {}),
+            ...(input.priorHeadSha ? { priorHeadSha: input.priorHeadSha } : {}),
+          }),
+          tools: REVIEW_TOOL_OVERRIDES,
+          parts: [{ type: "text", text: buildUserPrompt(input.reviewTarget) }],
+        },
+      });
+
+      eventLoop.stop();
+
+      if (timedOut) {
+        return timeoutResult(input.ruleId, start, input.timeoutMs);
+      }
+      const err = promptResp.data?.info.error;
+      if (err) {
+        return errorResult(input.ruleId, start, formatOpencodeError(err));
+      }
+      void server;
+      return { ruleId: input.ruleId, ok: true, durationMs: Date.now() - start };
+    } catch (e) {
+      if (timedOut) return timeoutResult(input.ruleId, start, input.timeoutMs);
+      if (abort.signal.aborted) {
+        return errorResult(input.ruleId, start, "opencode run aborted");
+      }
+      return errorResult(input.ruleId, start, formatThrown(e));
+    } finally {
+      if (timer) clearTimeout(timer);
+      try { opencode?.server.close(); } catch { /* shutdown best-effort */ }
+    }
+  },
+});
+
+export const opencodeScaffoldProvider: ScaffoldAgentFactory = (cfg: OpencodeConfig) => ({
+  name: "opencode",
+  async run(input: ScaffoldInput): Promise<ScaffoldResult> {
+    const start = Date.now();
+    const { providerID, modelID } = parseModel(cfg);
+
+    const abort = new AbortController();
+    if (input.signal) {
+      input.signal.addEventListener("abort", () => abort.abort(), { once: true });
+    }
+
+    let timedOut = false;
+    const timer = input.timeoutMs && input.timeoutMs > 0
+      ? setTimeout(() => {
+          timedOut = true;
+          abort.abort();
+        }, input.timeoutMs)
+      : undefined;
+
+    const filesWritten: string[] = [];
+    const sidecar = await startSidecar({
+      repoRoot: input.repoRoot,
+      scaffold: {
+        onFileWritten: (rel) => {
+          filesWritten.push(rel);
+          input.onFileWritten?.(rel);
+        },
+      },
+    });
+
+    const port = await getFreePort();
+    const config: Config = {
+      mcp: {
+        revu: {
+          type: "remote",
+          url: sidecar.url,
+          headers: {
+            Authorization: `Bearer ${sidecar.authToken}`,
+            "X-Revu-Rule-Id": "__scaffold__",
+          },
+          enabled: true,
+        },
+      },
+      permission: {
+        edit: "deny",
+        bash: READ_ONLY_BASH,
+        webfetch: "deny",
+      },
+    };
+
+    let opencode: Awaited<ReturnType<typeof createOpencode>> | undefined;
+    try {
+      opencode = await createOpencode({
+        port,
+        signal: abort.signal,
+        timeout: 30_000,
+        config,
+      });
+      const { client } = opencode;
+
+      const session = await client.session.create({ body: { title: "revu-scaffold" } });
+      const sessionId = session.data?.id;
+      if (!sessionId) {
+        return scaffoldError(start, filesWritten, "opencode: failed to create session");
+      }
+
+      const eventLoop = startScaffoldEventLoop(client, sessionId, input, abort.signal);
+
+      const promptResp = await client.session.prompt({
+        path: { id: sessionId },
+        body: {
+          model: { providerID, modelID },
+          system: buildOpencodeScaffoldSystemPrompt(input.force),
+          tools: SCAFFOLD_TOOL_OVERRIDES,
+          parts: [{ type: "text", text: buildInitUserPrompt({ repoRoot: input.repoRoot, force: input.force }) }],
+        },
+      });
+
+      eventLoop.stop();
+
+      if (timedOut) {
+        return scaffoldTimeoutResult(start, filesWritten, input.timeoutMs);
+      }
+      const err = promptResp.data?.info.error;
+      if (err) {
+        return scaffoldError(start, filesWritten, formatOpencodeError(err));
+      }
+      return { ok: true, durationMs: Date.now() - start, filesWritten };
+    } catch (e) {
+      if (timedOut) return scaffoldTimeoutResult(start, filesWritten, input.timeoutMs);
+      if (abort.signal.aborted) {
+        return scaffoldError(start, filesWritten, "opencode scaffold aborted");
+      }
+      return scaffoldError(start, filesWritten, formatThrown(e));
+    } finally {
+      if (timer) clearTimeout(timer);
+      try { opencode?.server.close(); } catch { /* shutdown best-effort */ }
+      await sidecar.shutdown().catch(() => {});
+    }
+  },
+});
+
+function parseModel(cfg: OpencodeConfig): { providerID: string; modelID: string } {
+  const provider = cfg.provider;
+  const model = cfg.model;
+  if (!provider || !model) {
+    throw new Error(
+      "opencode harness requires --provider and --model. Examples: --provider x-ai --model grok-4-fast, --provider google --model gemini-2.5-pro, --provider anthropic --model claude-sonnet-4-6.",
+    );
+  }
+  return { providerID: provider, modelID: model };
+}
+
+interface EventLoopHandle { stop: () => void }
+
+function startEventLoop(
+  client: Awaited<ReturnType<typeof createOpencode>>["client"],
+  sessionId: string,
+  input: ReviewInput,
+  signal: AbortSignal,
+): EventLoopHandle {
+  if (!input.onActivity) return { stop: () => {} };
+  const onActivity = input.onActivity;
+  let stopped = false;
+
+  void (async () => {
+    try {
+      const sub = await client.event.subscribe({ signal });
+      for await (const ev of sub.stream as AsyncIterable<Event>) {
+        if (stopped) break;
+        emitActivityFromEvent(ev, sessionId, onActivity);
+      }
+    } catch {
+      /* event stream errors are non-fatal — they're cosmetic progress */
+    }
+  })();
+
+  return {
+    stop: () => {
+      stopped = true;
+    },
+  };
+}
+
+function startScaffoldEventLoop(
+  client: Awaited<ReturnType<typeof createOpencode>>["client"],
+  sessionId: string,
+  input: ScaffoldInput,
+  signal: AbortSignal,
+): EventLoopHandle {
+  if (!input.onActivity) return { stop: () => {} };
+  const onActivity = input.onActivity;
+  let stopped = false;
+
+  void (async () => {
+    try {
+      const sub = await client.event.subscribe({ signal });
+      for await (const ev of sub.stream as AsyncIterable<Event>) {
+        if (stopped) break;
+        emitActivityFromEvent(ev, sessionId, onActivity);
+      }
+    } catch {
+      /* same robustness as review path */
+    }
+  })();
+
+  return {
+    stop: () => {
+      stopped = true;
+    },
+  };
+}
+
+function emitActivityFromEvent(
+  ev: Event,
+  sessionId: string,
+  onActivity: (a: ReviewActivity) => void,
+): void {
+  if (ev.type !== "message.part.updated") return;
+  const part = ev.properties.part;
+  if (part.sessionID !== sessionId) return;
+
+  if (part.type === "tool") {
+    const name = mapOpencodeToolName(part.tool);
+    onActivity({ kind: "tool", name, detail: summarizeOpencodeToolPart(part) });
+  } else if (part.type === "text") {
+    const trimmed = part.text.trim();
+    if (trimmed) onActivity({ kind: "text", detail: truncate(trimmed.replace(/\s+/g, " "), 120) });
+  }
+}
+
+/** Translate opencode's tool names to the Claude-Code-shaped names that the CLI's
+ *  progress renderer already knows how to format (so output is consistent across harnesses). */
+function mapOpencodeToolName(name: string): string {
+  switch (name) {
+    case "bash": return "Bash";
+    case "read": return "Read";
+    case "grep": return "Grep";
+    case "glob": return "Glob";
+    case "list": return "Glob";
+    case "write": return "Write";
+    case "edit": return "Edit";
+    default:
+      // MCP tools come through as `<server>_<tool>` in opencode; translate to mcp__<server>__<tool>.
+      if (name.startsWith("revu_")) return `mcp__revu__${name.slice("revu_".length)}`;
+      return name;
+  }
+}
+
+function summarizeOpencodeToolPart(part: { tool: string; state: { input?: unknown } }): string {
+  const i = (part.state.input ?? {}) as Record<string, unknown>;
+  if (part.tool === "bash" && typeof i["command"] === "string") {
+    return truncate((i["command"] as string).replace(/\s+/g, " "), 90);
+  }
+  if (part.tool === "read" && typeof i["filePath"] === "string") return i["filePath"] as string;
+  if (part.tool === "grep" && typeof i["pattern"] === "string") {
+    const path = typeof i["path"] === "string" ? ` in ${i["path"]}` : "";
+    return `${i["pattern"]}${path}`;
+  }
+  if ((part.tool === "glob" || part.tool === "list") && typeof i["pattern"] === "string") {
+    return i["pattern"] as string;
+  }
+  if (part.tool.startsWith("revu_")) {
+    if (typeof i["severity"] === "string" && typeof i["path"] === "string") {
+      const line = typeof i["line"] === "number" ? `:${i["line"]}` : "";
+      return `${i["severity"]} ${i["path"]}${line}`;
+    }
+    if (typeof i["path"] === "string") return i["path"] as string;
+  }
+  try {
+    return truncate(JSON.stringify(i), 90);
+  } catch {
+    return "";
+  }
+}
+
+/** Variant of the scaffold system prompt that tells the agent to use
+ *  `mcp__revu__write_rule_file` (sidecar tool) instead of opencode's built-in `write`. */
+function buildOpencodeScaffoldSystemPrompt(force: boolean): string {
+  const base = buildInitSystemPrompt({ force });
+  return base
+    .replace(
+      /- `Write` — restricted to.*?\.\n/,
+      "- `mcp__revu__write_rule_file` — the ONLY way to create rule files. Pass `path` (repo-relative, must end in `.revu.md`) and `content`. The server enforces path safety and rejects out-of-tree paths.\n",
+    )
+    .replace(
+      /You cannot Edit existing files\..*$/m,
+      "You cannot Edit existing files. You cannot run tests, builds, or arbitrary code. The built-in `write` and `edit` tools are disabled — use `mcp__revu__write_rule_file` to create rule files.",
+    )
+    .replace(/Write each file with `Write`/g, "Write each file with `mcp__revu__write_rule_file`");
+}
+
+async function getFreePort(): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const srv = createNetServer();
+    srv.unref();
+    srv.on("error", reject);
+    srv.listen(0, "127.0.0.1", () => {
+      const addr = srv.address();
+      if (typeof addr === "object" && addr) {
+        const p = addr.port;
+        srv.close(() => resolve(p));
+      } else {
+        srv.close();
+        reject(new Error("could not allocate free port for opencode server"));
+      }
+    });
+  });
+}
+
+function formatOpencodeError(err: unknown): string {
+  if (typeof err === "object" && err !== null) {
+    const e = err as { name?: string; data?: { message?: string; providerID?: string } };
+    const msg = e.data?.message ?? e.name ?? "unknown error";
+    const provider = e.data?.providerID ? ` [${e.data.providerID}]` : "";
+    return `opencode${provider}: ${msg}`;
+  }
+  return `opencode: ${String(err)}`;
+}
+
+function formatThrown(e: unknown): string {
+  const msg = (e as Error)?.message ?? String(e);
+  if (/ENOENT|spawn opencode/i.test(msg)) {
+    return "opencode binary not found on PATH. Install opencode (https://opencode.ai/docs/install/) before using --harness opencode.";
+  }
+  return msg;
+}
+
+function errorResult(ruleId: string, start: number, message: string): ReviewResult {
+  return { ruleId, ok: false, durationMs: Date.now() - start, errorMessage: message };
+}
+
+function timeoutResult(ruleId: string, start: number, timeoutMs?: number): ReviewResult {
+  return {
+    ruleId,
+    ok: false,
+    durationMs: Date.now() - start,
+    errorMessage: `timed out after ${timeoutMs}ms`,
+    timedOut: true,
+  };
+}
+
+function scaffoldError(start: number, filesWritten: string[], message: string): ScaffoldResult {
+  return { ok: false, durationMs: Date.now() - start, filesWritten, errorMessage: message };
+}
+
+function scaffoldTimeoutResult(start: number, filesWritten: string[], timeoutMs?: number): ScaffoldResult {
+  return {
+    ok: false,
+    durationMs: Date.now() - start,
+    filesWritten,
+    errorMessage: `timed out after ${timeoutMs}ms`,
+    timedOut: true,
+  };
+}
+
+function truncate(s: string, n: number): string {
+  return s.length > n ? `${s.slice(0, n)}…` : s;
+}

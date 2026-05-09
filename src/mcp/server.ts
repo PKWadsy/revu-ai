@@ -2,18 +2,23 @@ import { createServer, type IncomingMessage, type Server as HttpServer, type Ser
 import { randomBytes } from "node:crypto";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { isAbsolute, relative } from "node:path";
+import { isAbsolute, relative, dirname } from "node:path";
+import { mkdir, writeFile } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
 import type { Finding } from "../types.js";
 import { ensureFingerprint } from "../findings.js";
 import { FindingsAggregator } from "./aggregator.js";
+import { isAllowedRuleFileWrite, toRepoRelative } from "../scaffold-paths.js";
 import {
   ReportFindingShape,
   REPORT_FINDING_DESCRIPTION,
   MarkResolvedShape,
   MARK_RESOLVED_DESCRIPTION,
+  WriteRuleFileShape,
+  WRITE_RULE_FILE_DESCRIPTION,
   type ReportFindingInput,
   type MarkResolvedInput,
+  type WriteRuleFileInput,
 } from "./tools.js";
 
 export interface SidecarHandle {
@@ -23,11 +28,20 @@ export interface SidecarHandle {
   shutdown: () => Promise<void>;
 }
 
+export interface ScaffoldSidecarOptions {
+  /** Fires once per `.revu.md` file successfully written via `write_rule_file`.
+   *  The path is repo-relative, forward-slash separated. */
+  onFileWritten?: (relPath: string) => void;
+}
+
 export interface StartSidecarOptions {
   repoRoot: string;
   host?: string;
   /** If omitted, an ephemeral free port is chosen. */
   port?: number;
+  /** When set, the sidecar additionally exposes a `write_rule_file` tool for
+   *  scaffold agents that can't enforce path safety in-process (e.g. opencode). */
+  scaffold?: ScaffoldSidecarOptions;
 }
 
 export async function startSidecar(opts: StartSidecarOptions): Promise<SidecarHandle> {
@@ -35,8 +49,14 @@ export async function startSidecar(opts: StartSidecarOptions): Promise<SidecarHa
   const authToken = randomBytes(24).toString("base64url");
   const host = opts.host ?? "127.0.0.1";
 
+  const ctx: HandlerCtx = {
+    authToken,
+    aggregator,
+    repoRoot: opts.repoRoot,
+    ...(opts.scaffold ? { scaffold: opts.scaffold } : {}),
+  };
   const httpServer = createServer((req, res) => {
-    handle(req, res, { authToken, aggregator, repoRoot: opts.repoRoot }).catch((e) => {
+    handle(req, res, ctx).catch((e) => {
       if (!res.headersSent) {
         res.statusCode = 500;
         res.end(`internal error: ${(e as Error).message}`);
@@ -67,6 +87,7 @@ interface HandlerCtx {
   authToken: string;
   aggregator: FindingsAggregator;
   repoRoot: string;
+  scaffold?: ScaffoldSidecarOptions;
 }
 
 async function handle(req: IncomingMessage, res: ServerResponse, ctx: HandlerCtx): Promise<void> {
@@ -157,6 +178,35 @@ function buildMcpServer(ruleId: string, ctx: HandlerCtx): McpServer {
       };
     },
   );
+
+  if (ctx.scaffold) {
+    const scaffold = ctx.scaffold;
+    server.registerTool(
+      "write_rule_file",
+      {
+        description: WRITE_RULE_FILE_DESCRIPTION,
+        inputSchema: WriteRuleFileShape,
+      },
+      async (args: WriteRuleFileInput) => {
+        if (!isAllowedRuleFileWrite(ctx.repoRoot, args.path)) {
+          return errorResult(
+            "Refused: write_rule_file only accepts paths ending in `.revu.md` that resolve inside the repository. " +
+              "Globals go in `.revu/<topic>.revu.md`; locals go alongside the thing they cover as `<dir>/<topic>.revu.md`.",
+          );
+        }
+        const rel = toRepoRelative(ctx.repoRoot, args.path);
+        const abs = isAbsolute(args.path) ? args.path : `${ctx.repoRoot}/${rel}`;
+        try {
+          await mkdir(dirname(abs), { recursive: true });
+          await writeFile(abs, args.content, "utf8");
+        } catch (e) {
+          return errorResult(`Failed to write ${rel}: ${(e as Error).message}`);
+        }
+        scaffold.onFileWritten?.(rel);
+        return { content: [{ type: "text", text: `Wrote ${rel} (${args.content.length} bytes).` }] };
+      },
+    );
+  }
 
   return server;
 }

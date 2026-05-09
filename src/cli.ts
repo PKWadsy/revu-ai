@@ -71,17 +71,19 @@ program
   .command("init")
   .description("Spawn an agent to inspect the repo and scaffold curated .revu.md rule files")
   .option("--force", "overwrite existing rule files in .revu/")
-  .option("--provider <name>", "scaffold provider (default: claude-code)")
-  .option("--model <id>", "model id passed to provider")
+  .option("--harness <name>", "agent harness (default: claude-code; also: opencode)")
+  .option("--provider <name>", "AI provider id (opencode harness only — e.g. x-ai, google, anthropic)")
+  .option("--model <id>", "model id passed to harness")
   .option("--timeout-ms <ms>", "scaffold agent wall-clock timeout (default: 600000 = 10min)", parseIntOpt)
-  .action(async (opts: { force?: boolean; provider?: string; model?: string; timeoutMs?: number }) => {
+  .action(async (opts: { force?: boolean; harness?: string; provider?: string; model?: string; timeoutMs?: number }) => {
     const { runInit, InitRefusedError } = await import("./init.js");
     const showProgress = process.stderr.isTTY && !process.env.REVU_DEBUG;
     try {
       const result = await runInit({
         cwd: process.cwd(),
         force: opts.force ?? false,
-        provider: opts.provider ?? "claude-code",
+        harness: opts.harness ?? "claude-code",
+        ...(opts.provider !== undefined ? { provider: opts.provider } : {}),
         ...(opts.model !== undefined ? { model: opts.model } : {}),
         timeoutMs: opts.timeoutMs ?? 600_000,
         onStart: ({ repoRoot }) =>
@@ -147,8 +149,9 @@ program
   .option("--working-tree", "review uncommitted working-tree changes")
   .option("--staged", "review staged changes only")
   .option("--pattern <glob>", "rule file glob")
-  .option("--provider <name>", "review provider (default: claude-code)")
-  .option("--model <id>", "model id passed to provider")
+  .option("--harness <name>", "agent harness (default: claude-code; also: opencode)")
+  .option("--provider <name>", "AI provider id (opencode harness only — e.g. x-ai, google, anthropic)")
+  .option("--model <id>", "model id passed to harness")
   .option("--concurrency <n>", "max parallel agents", parseIntOpt)
   .option("--output <fmt>", "pretty | json | github")
   .option("--output-file <path>", "additionally write output to a file")

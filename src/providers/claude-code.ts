@@ -1,5 +1,6 @@
 import { isAbsolute, relative, resolve } from "node:path";
 import { query } from "@anthropic-ai/claude-agent-sdk";
+import { isAllowedRuleFileWrite } from "../scaffold-paths.js";
 import { buildSystemPrompt } from "../prompts/review-system.js";
 import { buildUserPrompt } from "../prompts/review-user.js";
 import { buildInitSystemPrompt } from "../prompts/init-system.js";
@@ -325,19 +326,6 @@ function summarizeToolInput(name: string, input: unknown): string {
   } catch {
     return "";
   }
-}
-
-/**
- * The scaffold agent is allowed to call `Write`, but only on `.revu.md` files
- * that resolve to a path inside the repo root. Anything else is denied.
- */
-export function isAllowedRuleFileWrite(repoRoot: string, filePath: unknown): boolean {
-  if (typeof filePath !== "string" || filePath.length === 0) return false;
-  if (!/\.revu\.md$/.test(filePath)) return false;
-  const abs = isAbsolute(filePath) ? filePath : resolve(repoRoot, filePath);
-  const rel = relative(resolve(repoRoot), abs);
-  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) return false;
-  return true;
 }
 
 const SCAFFOLD_TOOLSET = ["Read", "Grep", "Glob", "Bash", "Write"];

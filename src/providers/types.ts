@@ -43,7 +43,7 @@ export interface ReviewAgent {
 }
 
 export interface ReviewAgentFactory {
-  (cfg: { model?: string }): ReviewAgent;
+  (cfg: { model?: string; provider?: string }): ReviewAgent;
 }
 
 export interface ScaffoldInput {
@@ -73,5 +73,5 @@ export interface ScaffoldAgent {
 }
 
 export interface ScaffoldAgentFactory {
-  (cfg: { model?: string }): ScaffoldAgent;
+  (cfg: { model?: string; provider?: string }): ScaffoldAgent;
 }

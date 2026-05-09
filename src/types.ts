@@ -88,7 +88,12 @@ export interface RevuConfig {
   base?: string;
   workingTree: boolean;
   staged: boolean;
-  provider: string;
+  /** The agent harness driving the reviewer. Default `claude-code`. `opencode` lets you
+   *  swap in any provider/model opencode supports (xai, google, anthropic, …). */
+  harness: string;
+  /** AI provider for harnesses that support multiple (e.g. opencode). Ignored by
+   *  single-provider harnesses like `claude-code`. */
+  provider?: string;
   model?: string;
   concurrency?: number;
   output: "pretty" | "json" | "github" | "auto";
