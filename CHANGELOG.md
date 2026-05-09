@@ -14,7 +14,7 @@ All notable changes to `revu-ai` are documented here. The format follows [Keep a
 
 - **opencode harness.** Drop in any provider/model [opencode](https://opencode.ai) supports — xAI Grok, Google Gemini, OpenAI, Anthropic-via-opencode, etc.
   ```bash
-  revu-ai --harness opencode --provider x-ai    --model grok-4-fast
+  revu-ai --harness opencode --provider xai    --model grok-4-1-fast-reasoning
   revu-ai --harness opencode --provider google  --model gemini-2.5-pro
   revu-ai init --harness opencode --provider google --model gemini-2.5-pro
   ```

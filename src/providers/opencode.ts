@@ -1,4 +1,7 @@
 import { createServer as createNetServer } from "node:net";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createOpencode } from "@opencode-ai/sdk";
 import type { Config, Event } from "@opencode-ai/sdk";
 import { buildSystemPrompt } from "../prompts/review-system.js";
@@ -138,6 +141,17 @@ export const opencodeProvider: ReviewAgentFactory = (cfg: OpencodeConfig) => ({
           enabled: true,
         },
       },
+      // Auto-register the requested model under the provider so opencode's
+      // catalog lag doesn't bite. opencode's built-in xai/google/anthropic
+      // providers handle auth + base URL via their own env vars; this just
+      // tells opencode "yes, this model id is valid", letting users pin to
+      // models the baked-in models.dev cache may not list yet (e.g.,
+      // `grok-4-1-fast-reasoning` at the time of writing).
+      provider: {
+        [providerID]: {
+          models: { [modelID]: {} },
+        },
+      },
       permission: {
         edit: "deny",
         bash: READ_ONLY_BASH,
@@ -146,14 +160,16 @@ export const opencodeProvider: ReviewAgentFactory = (cfg: OpencodeConfig) => ({
     };
 
     let opencode: Awaited<ReturnType<typeof createOpencode>> | undefined;
+    const isolated = startIsolatedOpencode({
+      port,
+      signal: abort.signal,
+      timeout: 30_000,
+      config,
+    });
     try {
-      opencode = await createOpencode({
-        port,
-        signal: abort.signal,
-        timeout: 30_000,
-        config,
-      });
+      opencode = await isolated.opencode;
       const { client, server } = opencode;
+      void server;
 
       const session = await client.session.create({ body: { title: `revu-${input.ruleId}` } });
       const sessionId = session.data?.id;
@@ -177,6 +193,11 @@ export const opencodeProvider: ReviewAgentFactory = (cfg: OpencodeConfig) => ({
           tools: REVIEW_TOOL_OVERRIDES,
           parts: [{ type: "text", text: buildUserPrompt(input.reviewTarget) }],
         },
+        // Honour the abort signal at the HTTP layer too — without this, a
+        // timeout fires `abort.abort()`, kills the opencode child process,
+        // but the in-flight fetch keeps waiting for a response that never
+        // comes.
+        signal: abort.signal,
       });
 
       eventLoop.stop();
@@ -213,6 +234,7 @@ export const opencodeProvider: ReviewAgentFactory = (cfg: OpencodeConfig) => ({
     } finally {
       if (timer) clearTimeout(timer);
       try { opencode?.server.close(); } catch { /* shutdown best-effort */ }
+      isolated.cleanup();
     }
   },
 });
@@ -260,6 +282,13 @@ export const opencodeScaffoldProvider: ScaffoldAgentFactory = (cfg: OpencodeConf
           enabled: true,
         },
       },
+      // See review path comment — auto-register the requested model so
+      // opencode's catalog lag doesn't reject newly-released model ids.
+      provider: {
+        [providerID]: {
+          models: { [modelID]: {} },
+        },
+      },
       permission: {
         edit: "deny",
         bash: READ_ONLY_BASH,
@@ -268,14 +297,15 @@ export const opencodeScaffoldProvider: ScaffoldAgentFactory = (cfg: OpencodeConf
     };
 
     let opencode: Awaited<ReturnType<typeof createOpencode>> | undefined;
+    const isolated = startIsolatedOpencode({
+      port,
+      signal: abort.signal,
+      timeout: 30_000,
+      config,
+    });
     try {
-      opencode = await createOpencode({
-        port,
-        signal: abort.signal,
-        timeout: 30_000,
-        config,
-      });
-      const { client } = opencode;
+      opencode = await isolated.opencode;
+      const client = opencode.client;
 
       const session = await client.session.create({ body: { title: "revu-scaffold" } });
       const sessionId = session.data?.id;
@@ -293,6 +323,7 @@ export const opencodeScaffoldProvider: ScaffoldAgentFactory = (cfg: OpencodeConf
           tools: SCAFFOLD_TOOL_OVERRIDES,
           parts: [{ type: "text", text: buildInitUserPrompt({ repoRoot: input.repoRoot, force: input.force }) }],
         },
+        signal: abort.signal,
       });
 
       eventLoop.stop();
@@ -325,17 +356,63 @@ export const opencodeScaffoldProvider: ScaffoldAgentFactory = (cfg: OpencodeConf
     } finally {
       if (timer) clearTimeout(timer);
       try { opencode?.server.close(); } catch { /* shutdown best-effort */ }
+      isolated.cleanup();
       await sidecar.shutdown().catch(() => {/* shutdown best-effort */});
     }
   },
 });
+
+/**
+ * Spawn an opencode server with an isolated `XDG_DATA_HOME` so each
+ * concurrent invocation gets its own sqlite database. Without this, parallel
+ * fan-out collides on `~/.local/share/opencode/opencode.db` — multiple
+ * processes try to set `PRAGMA journal_mode = WAL` against the same file at
+ * startup, the OS lock loses one, and the server exits 1.
+ *
+ * The trick that makes this safe under `Promise.all`: `createOpencode`
+ * captures `process.env` synchronously inside its body before the first
+ * `await` (it forwards env to a `cross-spawn`-launched child process). So if
+ * we set `XDG_DATA_HOME`, call `createOpencode` (kicking off the synchronous
+ * launch), and restore `XDG_DATA_HOME` — all in one synchronous block — no
+ * other coroutine can interleave between mutation and capture, even though
+ * other rules' `run()` calls are also racing through the same code path.
+ */
+function startIsolatedOpencode(options: {
+  port: number;
+  signal: AbortSignal;
+  timeout: number;
+  config: Config;
+}): { opencode: ReturnType<typeof createOpencode>; cleanup: () => void } {
+  const dataDir = mkdtempSync(join(tmpdir(), "revu-opencode-"));
+  const previousXDG = process.env["XDG_DATA_HOME"];
+  process.env["XDG_DATA_HOME"] = dataDir;
+  let promise: ReturnType<typeof createOpencode>;
+  try {
+    // SDK runs body synchronously up to its first `await`, capturing
+    // `process.env` for the spawned child along the way.
+    promise = createOpencode(options);
+  } finally {
+    if (previousXDG === undefined) delete process.env["XDG_DATA_HOME"];
+    else process.env["XDG_DATA_HOME"] = previousXDG;
+  }
+  return {
+    opencode: promise,
+    cleanup: () => {
+      try {
+        rmSync(dataDir, { recursive: true, force: true });
+      } catch {
+        /* best-effort */
+      }
+    },
+  };
+}
 
 function parseModel(cfg: OpencodeConfig): { providerID: string; modelID: string } {
   const provider = cfg.provider;
   const model = cfg.model;
   if (!provider || !model) {
     throw new Error(
-      "opencode harness requires --provider and --model. Examples: --provider x-ai --model grok-4-fast, --provider google --model gemini-2.5-pro, --provider anthropic --model claude-sonnet-4-6.",
+      "opencode harness requires --provider and --model. Examples: --provider xai --model grok-4-1-fast-reasoning, --provider google --model gemini-2.5-pro, --provider anthropic --model claude-sonnet-4-6.",
     );
   }
   return { providerID: provider, modelID: model };
@@ -353,12 +430,19 @@ function startEventLoop(
   const onActivity = input.onActivity;
   let stopped = false;
 
+  // opencode emits `message.part.updated` for every chunk of a tool's input
+  // as it streams in (e.g. you'll see Glob({}) → Glob(**/*.[jt]s) for the
+  // same callID). Track which callIDs we've already announced to keep the
+  // progress UI clean — emit on the first sighting that has a non-empty
+  // input, ignore later updates for the same callID.
+  const announcedTools = new Set<string>();
+
   void (async () => {
     try {
       const sub = await client.event.subscribe({ signal });
       for await (const ev of sub.stream as AsyncIterable<Event>) {
         if (stopped) break;
-        emitActivityFromEvent(ev, sessionId, onActivity);
+        emitActivityFromEvent(ev, sessionId, onActivity, announcedTools);
       }
     } catch {
       /* event stream errors are non-fatal — they're cosmetic progress */
@@ -381,13 +465,14 @@ function startScaffoldEventLoop(
   if (!input.onActivity) return { stop: () => {} };
   const onActivity = input.onActivity;
   let stopped = false;
+  const announcedTools = new Set<string>();
 
   void (async () => {
     try {
       const sub = await client.event.subscribe({ signal });
       for await (const ev of sub.stream as AsyncIterable<Event>) {
         if (stopped) break;
-        emitActivityFromEvent(ev, sessionId, onActivity);
+        emitActivityFromEvent(ev, sessionId, onActivity, announcedTools);
       }
     } catch {
       /* same robustness as review path */
@@ -405,12 +490,20 @@ function emitActivityFromEvent(
   ev: Event,
   sessionId: string,
   onActivity: (a: ReviewActivity) => void,
+  announcedTools: Set<string>,
 ): void {
   if (ev.type !== "message.part.updated") return;
   const part = ev.properties.part;
   if (part.sessionID !== sessionId) return;
 
   if (part.type === "tool") {
+    if (announcedTools.has(part.callID)) return;
+    const input = (part.state.input ?? {}) as Record<string, unknown>;
+    if (Object.keys(input).length === 0) {
+      // Wait for the input to actually arrive — the next update will have it.
+      return;
+    }
+    announcedTools.add(part.callID);
     const name = mapOpencodeToolName(part.tool);
     onActivity({ kind: "tool", name, detail: summarizeOpencodeToolPart(part) });
   } else if (part.type === "text") {

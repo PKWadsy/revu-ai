@@ -25,7 +25,7 @@ pnpm add -D revu-ai
 Set the API key for whichever harness/provider you'll use:
 
 - **Claude Code** (default harness): `ANTHROPIC_API_KEY`
-- **opencode** harness with `--provider x-ai`: `XAI_API_KEY`
+- **opencode** harness with `--provider xai`: `XAI_API_KEY`
 - **opencode** harness with `--provider google`: `GOOGLE_GENERATIVE_AI_API_KEY`
 - **opencode** harness with `--provider anthropic`: `ANTHROPIC_API_KEY`
 - **opencode** harness with `--provider openai`: `OPENAI_API_KEY`
@@ -100,7 +100,7 @@ Options:
   --staged                  # review staged changes only
   --pattern <glob>          # rule file glob; default: **/*.revu.md
   --harness <name>          # claude-code | opencode (default: claude-code)
-  --provider <name>         # AI provider id (opencode harness only) — e.g. x-ai, google, anthropic
+  --provider <name>         # AI provider id (opencode harness only) — e.g. xai, google, anthropic
   --model <id>              # model id passed to harness
   --concurrency <n>         # max parallel agents; default: min(8, ruleCount)
   --output <fmt>            # pretty | json | github (default: auto)
@@ -133,7 +133,7 @@ Exit codes: `0` clean, `1` findings ≥ `--fail-on`, `2` runner / agent error.
 
 ```bash
 # Grok via xAI
-revu-ai --harness opencode --provider x-ai --model grok-4-fast
+revu-ai --harness opencode --provider xai --model grok-4-1-fast-reasoning
 
 # Gemini 2.5 Pro via Google
 revu-ai --harness opencode --provider google --model gemini-2.5-pro
@@ -147,8 +147,8 @@ Or in `revu.config.json`:
 ```json
 {
   "harness": "opencode",
-  "provider": "x-ai",
-  "model": "grok-4-fast"
+  "provider": "xai",
+  "model": "grok-4-1-fast-reasoning"
 }
 ```
 

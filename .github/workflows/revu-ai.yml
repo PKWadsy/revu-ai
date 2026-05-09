@@ -72,21 +72,17 @@ jobs:
           if [ -f /tmp/revu-prior.json ]; then
             PRIOR_FLAG="--prior-report /tmp/revu-prior.json"
           fi
-          # Concurrency 1 (not the bottleneck we'd like): each opencode server
-          # writes to a shared sqlite db at ~/.local/share/opencode/, and
-          # parallel `PRAGMA journal_mode = WAL` calls during fan-out collide
-          # with "database is locked". Bumping back up needs per-rule data
-          # isolation (likely XDG_DATA_HOME per process) — tracked separately.
-          # grok-4-1-fast-reasoning has a 2M-token context, so large-file
-          # Reads are not a concern under this harness.
+          # The opencode harness isolates each rule's server with a per-rule
+          # XDG_DATA_HOME so concurrent fan-out is safe. grok-4-1-fast-reasoning
+          # has a 2M-token context, so large-file Reads are not a concern under
+          # this harness.
           node dist/cli.js \
             --harness opencode \
-            --provider x-ai \
+            --provider xai \
             --model grok-4-1-fast-reasoning \
             --base "origin/$BASE_REF" \
             --output json \
             --output-file /tmp/revu.json \
-            --concurrency 1 \
             --timeout-ms 600000 \
             $PRIOR_FLAG
 

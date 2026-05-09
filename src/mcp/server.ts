@@ -78,6 +78,14 @@ export async function startSidecar(opts: StartSidecarOptions): Promise<SidecarHa
   const shutdown = () =>
     new Promise<void>((resolve, reject) => {
       httpServer.close((err) => (err ? reject(err) : resolve()));
+      // `httpServer.close` only stops accepting new connections; it then
+      // waits for all keep-alive sockets to drain on their own. The
+      // opencode harness keeps an MCP keep-alive connection open, and when
+      // an opencode child process is killed mid-prompt, its socket is
+      // half-closed but never reaches `end` cleanly — `close()` then waits
+      // forever. Force-close every open connection so the runner can
+      // proceed to emit its summary instead of hanging post-timeout.
+      httpServer.closeAllConnections?.();
     });
 
   return { url, authToken, aggregator, shutdown };
