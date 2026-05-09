@@ -1,10 +1,7 @@
-import { writeFileSync } from "node:fs";
 import type { RunReport } from "../types.js";
 
-export function emitJson(report: RunReport, outputFile?: string): void {
-  const text = JSON.stringify(report, null, 2);
-  process.stdout.write(text + "\n");
-  if (outputFile) {
-    writeFileSync(outputFile, text + "\n", "utf8");
-  }
+/** Emit the run report as JSON to stdout. The file-side counterpart is always
+ *  JSON regardless of stdout format — see `writeReportFile` for that. */
+export function emitJson(report: RunReport): void {
+  process.stdout.write(JSON.stringify(report, null, 2) + "\n");
 }

@@ -78,12 +78,16 @@ jobs:
           # XDG_DATA_HOME so concurrent fan-out is safe. grok-4-1-fast-reasoning
           # has a 2M-token context, so large-file Reads are not a concern under
           # this harness.
+          # `--output pretty` prints a human-scannable summary to stdout
+          # so the CI run page is easy to skim. `--output-file` always
+          # writes JSON regardless of stdout format — the cache step below
+          # picks it up so the next run can `--prior-report` against it.
           node dist/cli.js \
             --harness opencode \
             --provider xai \
             --model grok-4-1-fast-non-reasoning \
             --base "origin/$BASE_REF" \
-            --output json \
+            --output pretty \
             --output-file /tmp/revu.json \
             --timeout-ms 600000 \
             $PRIOR_FLAG

@@ -1,4 +1,3 @@
-import { writeFileSync } from "node:fs";
 import type { Finding, RunReport, Severity } from "../types.js";
 
 const SEV_COMMAND: Record<Severity, "notice" | "warning" | "error"> = {
@@ -9,16 +8,12 @@ const SEV_COMMAND: Record<Severity, "notice" | "warning" | "error"> = {
   critical: "error",
 };
 
-export function emitGithub(report: RunReport, outputFile?: string): void {
+export function emitGithub(report: RunReport): void {
   const lines: string[] = [];
   for (const f of report.findings) {
     lines.push(formatLine(f));
   }
-  const text = lines.length ? lines.join("\n") + "\n" : "";
-  process.stdout.write(text);
-  if (outputFile) {
-    writeFileSync(outputFile, text, "utf8");
-  }
+  if (lines.length) process.stdout.write(lines.join("\n") + "\n");
 }
 
 function formatLine(f: Finding): string {

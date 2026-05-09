@@ -238,10 +238,18 @@ program
       }, { ...(priorReportObj ? { priorReport: priorReportObj } : {}) });
 
       const fmt = cfg.output === "auto" ? (process.stdout.isTTY ? "pretty" : "json") : cfg.output;
-      const outFile = cfg.outputFile;
-      if (fmt === "json") emitJson(report, outFile);
-      else if (fmt === "github") emitGithub(report, outFile);
-      else emitPretty(report, outFile);
+      if (fmt === "json") emitJson(report);
+      else if (fmt === "github") emitGithub(report);
+      else emitPretty(report);
+
+      // `--output-file` is the machine-readable contract for cross-run
+      // reuse (`--prior-report` next time). It is always JSON regardless
+      // of the stdout format the user picked, so a CI workflow can show
+      // a pretty review on screen and still cache the report verbatim.
+      if (cfg.outputFile) {
+        const fs = await import("node:fs");
+        fs.writeFileSync(cfg.outputFile, JSON.stringify(report, null, 2) + "\n", "utf8");
+      }
 
       // If every rule errored, emit a stderr line with the actual cause so
       // it's visible even when stdout is being piped/captured.
