@@ -3,8 +3,10 @@
 # Runs the version of revu-ai that is *in this PR* (built from source,
 # not the npm-published one) so every PR is reviewed by its own changes.
 #
-# Harness: opencode + xAI's `grok-4-1-fast-reasoning` (2M context, ~$0.20/M
-# input). The opencode binary must be on PATH; we install it from npm.
+# Harness: opencode + xAI's `grok-4-1-fast-non-reasoning` (2M context,
+# ~$0.20/M input). The opencode binary must be on PATH; we install it
+# from npm. Switch to `grok-4-1-fast-reasoning` if reviews start missing
+# subtle issues — same context window and pricing, slower but deeper.
 #
 # Cross-run state: actions/cache restores the prior --output-file report
 # (so reviewers see their previous open findings as system-prompt context;
@@ -79,7 +81,7 @@ jobs:
           node dist/cli.js \
             --harness opencode \
             --provider xai \
-            --model grok-4-1-fast-reasoning \
+            --model grok-4-1-fast-non-reasoning \
             --base "origin/$BASE_REF" \
             --output json \
             --output-file /tmp/revu.json \
