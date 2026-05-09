@@ -80,7 +80,9 @@ program
   .option("--timeout-ms <ms>", "scaffold agent wall-clock timeout (default: 600000 = 10min)", parseIntOpt)
   .action(async (opts: { force?: boolean; harness?: string; provider?: string; model?: string; timeoutMs?: number }) => {
     const { runInit, InitRefusedError } = await import("./init.js");
-    const showProgress = process.stderr.isTTY && !process.env.REVU_DEBUG;
+    // See run-command sibling — paint() handles ANSI noop in non-TTY, so
+    // emit progress everywhere unless REVU_DEBUG / REVU_QUIET says otherwise.
+    const showProgress = !process.env.REVU_DEBUG && !process.env.REVU_QUIET;
     try {
       const result = await runInit({
         cwd: process.cwd(),
@@ -168,7 +170,12 @@ program
     const repoRoot = findRepoRoot(cwd);
     const cfg = loadConfig(repoRoot, opts);
     try {
-      const showProgress = process.stderr.isTTY && !process.env.REVU_DEBUG;
+      // Always show per-rule progress — `paint()` already noops ANSI codes
+      // when stderr isn't a TTY (CI logs), so this gives plain `↳ Bash(...)`,
+      // `↳ Read(...)`, `✱ med ...` lines that are useful for debugging long
+      // CI runs. REVU_DEBUG suppresses this in favour of raw SDK debug
+      // output. Set REVU_QUIET to opt out entirely.
+      const showProgress = !process.env.REVU_DEBUG && !process.env.REVU_QUIET;
 
       // Optionally read the prior-run report to enable cross-run reasoning.
       let priorReportObj: import("./types.js").RunReport | undefined;

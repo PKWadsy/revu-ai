@@ -2,8 +2,32 @@ import { createServer as createNetServer } from "node:net";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Agent, setGlobalDispatcher } from "undici";
 import { createOpencode } from "@opencode-ai/sdk";
 import type { Config, Event } from "@opencode-ai/sdk";
+
+/**
+ * Node's built-in `fetch` (undici) has a default `headersTimeout` of 5 minutes:
+ * if the response headers don't arrive in time, the request dies with a
+ * generic "fetch failed". The opencode SDK's `session.prompt(...)` is a
+ * blocking POST — opencode doesn't return the HTTP response until the agent's
+ * loop is fully done. A long Grok inference (>5 min) hits this ceiling
+ * silently; in revu-ai's logs it surfaces as `errorMessage: "fetch failed"`
+ * with `durationMs: ~305000`, NOT a clean revu timeout.
+ *
+ * Disable both undici timeouts (headers + body) for the whole process so
+ * revu's own per-rule `--timeout-ms` is the only ceiling. Affects every
+ * `globalThis.fetch` call in this Node process — fine for a CLI tool;
+ * something to revisit if revu-ai is ever embedded as a library.
+ *
+ * Tracked upstream as opencode-ai#15555.
+ */
+let dispatcherExtended = false;
+function ensureLongRunningDispatcher(): void {
+  if (dispatcherExtended) return;
+  dispatcherExtended = true;
+  setGlobalDispatcher(new Agent({ headersTimeout: 0, bodyTimeout: 0 }));
+}
 import { buildSystemPrompt } from "../prompts/review-system.js";
 import { buildUserPrompt } from "../prompts/review-user.js";
 import { buildInitSystemPrompt } from "../prompts/init-system.js";
@@ -113,6 +137,7 @@ export const opencodeProvider: ReviewAgentFactory = (cfg: OpencodeConfig) => ({
   name: "opencode",
   async run(input: ReviewInput): Promise<ReviewResult> {
     const start = Date.now();
+    ensureLongRunningDispatcher();
     const { providerID, modelID } = parseModel(cfg);
 
     const abort = new AbortController();
@@ -245,6 +270,7 @@ export const opencodeScaffoldProvider: ScaffoldAgentFactory = (cfg: OpencodeConf
   name: "opencode",
   async run(input: ScaffoldInput): Promise<ScaffoldResult> {
     const start = Date.now();
+    ensureLongRunningDispatcher();
     const { providerID, modelID } = parseModel(cfg);
 
     const abort = new AbortController();
@@ -418,8 +444,10 @@ function parseModel(cfg: OpencodeConfig): { providerID: string; modelID: string 
 }
 
 /** Build the inline `provider` block for opencode's Config: registers the
- *  exact model id under the chosen provider and (when the caller supplied a
- *  per-rule timeout) extends opencode's per-LLM-call HTTP timeout to match. */
+ *  exact model id under the chosen provider so opencode's catalog lag doesn't
+ *  reject brand-new model ids. We also keep `options.timeout` so opencode's
+ *  internal AI-SDK call timeout matches our per-rule budget — this is a
+ *  belt-and-braces guard alongside the global undici dispatcher above. */
 function providerConfig(
   providerID: string,
   modelID: string,
