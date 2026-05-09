@@ -1,0 +1,36 @@
+# Code-correctness CI: typecheck, tests, and build.
+#
+# Kept separate from revu-ai.yml (which dogfoods the AI review on PRs)
+# because this workflow doesn't need API keys and should run on every push,
+# not just pull_request events.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # `pnpm/action-setup` reads the version from package.json's
+      # `packageManager` field; do not pass `version:` here.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm typecheck
+
+      - run: pnpm test
+
+      - run: pnpm build
