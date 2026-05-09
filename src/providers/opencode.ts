@@ -62,6 +62,11 @@ const REVIEW_TOOL_OVERRIDES: Record<string, boolean> = {
   // tokens for no review benefit at the rule's scope. The system prompt
   // tells the model not to use them; this is the enforcement.
   task: false,
+  // `question` is opencode's interactive user-input prompt. In a headless
+  // CI run there's no human to answer, so the agent just hangs forever
+  // waiting for a reply (this was the consistent "one rule silent for
+  // minutes" pattern in CI). Disable.
+  question: false,
 };
 
 const SCAFFOLD_TOOL_OVERRIDES: Record<string, boolean> = {
@@ -70,38 +75,44 @@ const SCAFFOLD_TOOL_OVERRIDES: Record<string, boolean> = {
   multiedit: false,
   patch: false,
   webfetch: false,
+  task: false,
+  question: false,
 };
 
 /**
  * Bash allowlist for the opencode harness.
  *
- * **Safety caveat (vs. the claude-code harness):** opencode's permission system
- * matches bash commands against simple glob patterns where `*` matches *any*
- * character — including shell metacharacters like `>`, `;`, `&&`, and backticks.
- * That makes this allowlist a **weaker boundary** than the claude-code provider's
- * `isReadOnlyShellCommand` (in `./claude-code.ts`), which performs token-aware
- * parsing and rejects redirects, chaining, command substitution, and unsafe git
- * subcommands.
+ * **Pattern precedence is "last matching rule wins"** per opencode's
+ * permissions docs. The catch-all `"*": "deny"` must therefore come FIRST,
+ * with specific allows AFTER — otherwise the catch-all overrides every
+ * specific rule and bash gets silently denied for every command. (Earlier
+ * revu-ai versions had the catch-all last, which is why CI agents started
+ * reverse-engineering diffs from `.git/refs/*` instead of running `git diff`
+ * — every bash call was denied with no error visible to the user.)
  *
- * Concretely: `"cat *"` here will permit `cat foo > /tmp/x` if the model issues
- * the redirect, because opencode lacks a per-call gate equivalent to the Agent
- * SDK's `canUseTool`. The residual defenses are:
+ * **Safety caveat (vs. the claude-code harness):** opencode's `*` matches
+ * zero or more of any character including spaces and shell metacharacters.
+ * So `"cat *": "allow"` will permit `cat foo > /tmp/x` if the model issues
+ * the redirect. opencode lacks a per-call gate equivalent to the Agent
+ * SDK's `canUseTool`, so we can't reject shell-redirects/chains/substitution
+ * the way `isReadOnlyShellCommand` does. Residual defenses:
  *
- *   1. The reviewer system prompt explicitly tells the agent to use only
- *      read-only commands (no file edits).
+ *   1. The reviewer system prompt tells the agent to use only read-only
+ *      commands.
  *   2. `permission.edit: "deny"` blocks opencode's built-in edit tools.
- *   3. The trailing `"*": "deny"` catchall denies anything not on this list,
- *      including obvious mutators (`rm`, `mv`, `chmod`, etc.).
+ *   3. The catch-all denies bash bins not explicitly listed below.
+ *   4. CI runs in ephemeral GHA runners — nothing persistent to corrupt.
  *
- * Patterns are kept narrow on purpose — exact-match where possible, prefix +
- * required space (`"cmd *"`) elsewhere — to minimise glob surface. See
- * `tests/opencode-bash.test.ts` for the cross-validation test asserting that
- * every command the patterns are meant to allow is *also* accepted by
- * `isReadOnlyShellCommand`, plus a battery of adversarial inputs that the
- * stricter validator rejects (the contract the agent is expected to respect).
+ * `tests/opencode-bash.test.ts` documents the intended-allow set and the
+ * adversarial commands the agent must avoid; treat it as the contract,
+ * with claude-code as the fallback if a hostile model ever matters.
  */
 const READ_ONLY_BASH: Record<string, "allow" | "deny"> = {
-  // git read-only subcommands — wildcard for args, but `*: deny` blocks unrelated subs.
+  // Catch-all FIRST — last-match-wins means this is the floor that
+  // specific allows below override.
+  "*": "deny",
+
+  // git read-only subcommands.
   "git diff": "allow",
   "git diff *": "allow",
   "git log": "allow",
@@ -113,7 +124,8 @@ const READ_ONLY_BASH: Record<string, "allow" | "deny"> = {
   "git ls-files *": "allow",
   "git rev-parse *": "allow",
   "git blame *": "allow",
-  // file inspection
+
+  // file inspection.
   "cat *": "allow",
   "head *": "allow",
   "tail *": "allow",
@@ -130,12 +142,10 @@ const READ_ONLY_BASH: Record<string, "allow" | "deny"> = {
   "file *": "allow",
   "basename *": "allow",
   "dirname *": "allow",
-  // catchall — denies anything not explicitly listed above.
-  "*": "deny",
 };
 
-/** Test-only export so `tests/opencode-bash.test.ts` can cross-validate every
- *  intended-allow pattern against the stricter `isReadOnlyShellCommand`. */
+/** Test-only export so `tests/opencode-bash.test.ts` can cross-validate
+ *  every intended-allow command against `isReadOnlyShellCommand`. */
 export const __READ_ONLY_BASH_FOR_TESTS = READ_ONLY_BASH;
 
 export const opencodeProvider: ReviewAgentFactory = (cfg: OpencodeConfig) => ({
