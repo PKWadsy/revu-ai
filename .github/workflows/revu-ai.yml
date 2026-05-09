@@ -1,0 +1,117 @@
+# revu-ai dogfoods on its own PRs.
+#
+# Runs the version of revu-ai that is *in this PR* (built from source,
+# not the npm-published one) so every PR is reviewed by its own changes.
+#
+# Harness: opencode + xAI's `grok-4-1-fast-non-reasoning` (2M context,
+# ~$0.20/M input). The opencode binary must be on PATH; we install it
+# from npm. Switch to `grok-4-1-fast-reasoning` if reviews start missing
+# subtle issues — same context window and pricing, slower but deeper.
+#
+# Cross-run state: actions/cache restores the prior --output-file report
+# (so reviewers see their previous open findings as system-prompt context;
+# the post step PATCHes existing comments instead of always creating fresh
+# ones). The cache key uses run_id so each run writes a fresh entry; the
+# restore-keys prefix picks up whatever the most-recent prior cache was.
+#
+# Requires:
+#   - XAI_API_KEY repository secret.
+#   - At least one *.revu.md rule file in the repo (`.revu/...` for
+#     globals, or local rules next to the thing they cover).
+name: revu-ai
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # No `version:` here — pnpm/action-setup reads it from package.json's
+      # `packageManager` field, and specifying both is an error.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - run: pnpm build
+
+      # opencode harness needs the `opencode` binary on PATH.
+      - name: Install opencode CLI
+        run: npm install -g opencode-ai@latest
+
+      - name: Restore prior revu-ai report
+        uses: actions/cache@v4
+        with:
+          path: /tmp/revu-prior.json
+          key: revu-ai-pr-${{ github.event.pull_request.number }}-${{ github.run_id }}
+          restore-keys: |
+            revu-ai-pr-${{ github.event.pull_request.number }}-
+
+      # `if: always()` on the post step below ensures findings still land on
+      # the PR even if this step exits non-zero (e.g. findings >= --fail-on,
+      # or rule agents erroring out). The job's overall status will be the
+      # truthful red/green of this step's outcome.
+      - name: Run revu-ai (built from source)
+        env:
+          XAI_API_KEY: ${{ secrets.XAI_API_KEY }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          git fetch origin "$BASE_REF":"refs/remotes/origin/$BASE_REF"
+          PRIOR_FLAG=""
+          if [ -f /tmp/revu-prior.json ]; then
+            PRIOR_FLAG="--prior-report /tmp/revu-prior.json"
+          fi
+          # The opencode harness isolates each rule's server with a per-rule
+          # XDG_DATA_HOME so concurrent fan-out is safe. grok-4-1-fast-reasoning
+          # has a 2M-token context, so large-file Reads are not a concern under
+          # this harness.
+          # `--output pretty` prints a human-scannable summary to stdout
+          # so the CI run page is easy to skim. `--output-file` always
+          # writes JSON regardless of stdout format — the cache step below
+          # picks it up so the next run can `--prior-report` against it.
+          # Concurrency 3: GHA runners are 2 vCPU; 7 parallel opencode
+          # children + xAI streams was over-stressing the slot. Three at
+          # a time keeps the activity stream readable and we still finish
+          # all 7 rules in ~3 minutes.
+          node dist/cli.js \
+            --harness opencode \
+            --provider xai \
+            --model grok-4-1-fast-non-reasoning \
+            --base "origin/$BASE_REF" \
+            --output pretty \
+            --output-file /tmp/revu.json \
+            --concurrency 3 \
+            --timeout-ms 600000 \
+            $PRIOR_FLAG
+
+      - name: Post review comments
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PRIOR_FLAG=""
+          if [ -f /tmp/revu-prior.json ]; then
+            PRIOR_FLAG="--prior-report /tmp/revu-prior.json"
+          fi
+          node dist/cli.js github post \
+            --report /tmp/revu.json \
+            --output-file /tmp/revu-post.json \
+            $PRIOR_FLAG
+          # The cache step above keys on this exact path; copy the augmented
+          # report there so the next run restores it as the prior.
+          cp /tmp/revu-post.json /tmp/revu-prior.json
+        # Add `--request-changes high` to the command above to make the
+        # PR check itself blocking on high/critical findings.

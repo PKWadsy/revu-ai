@@ -86,6 +86,39 @@ describe("discoverRules", () => {
   });
 });
 
+describe("discoverRules — tracked but deleted in working tree", () => {
+  let trackedDeleted: string;
+
+  beforeAll(() => {
+    trackedDeleted = mkdtempSync(join(tmpdir(), "revu-discovery-deleted-"));
+    execFileSync("git", ["init", "-q"], { cwd: trackedDeleted });
+    execFileSync("git", ["config", "user.email", "t@x"], { cwd: trackedDeleted });
+    execFileSync("git", ["config", "user.name", "t"], { cwd: trackedDeleted });
+    execFileSync("git", ["config", "commit.gpgsign", "false"], { cwd: trackedDeleted });
+
+    mkdirSync(join(trackedDeleted, ".revu"), { recursive: true });
+    writeFileSync(join(trackedDeleted, ".revu", "kept.revu.md"), "# kept");
+    writeFileSync(join(trackedDeleted, ".revu", "doomed.revu.md"), "# doomed");
+    execFileSync("git", ["add", "."], { cwd: trackedDeleted });
+    execFileSync("git", ["commit", "-q", "-m", "init"], { cwd: trackedDeleted });
+
+    // Delete from working tree without staging the deletion. `git ls-files -c`
+    // still lists `doomed.revu.md`; we should skip it.
+    rmSync(join(trackedDeleted, ".revu", "doomed.revu.md"));
+  });
+
+  afterAll(() => {
+    rmSync(trackedDeleted, { recursive: true, force: true });
+  });
+
+  it("skips paths that exist in the index but not in the working tree", async () => {
+    const rules = await discoverRules(trackedDeleted, "**/*.revu.md");
+    const ids = rules.map((r) => r.ruleId);
+    expect(ids).toContain(".revu/kept");
+    expect(ids).not.toContain(".revu/doomed");
+  });
+});
+
 describe("discoverRules — non-git fallback", () => {
   let nogit: string;
 

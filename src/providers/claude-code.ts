@@ -1,5 +1,7 @@
 import { isAbsolute, relative, resolve } from "node:path";
+import { statSync } from "node:fs";
 import { query } from "@anthropic-ai/claude-agent-sdk";
+import { isAllowedRuleFileWrite } from "../scaffold-paths.js";
 import { buildSystemPrompt } from "../prompts/review-system.js";
 import { buildUserPrompt } from "../prompts/review-user.js";
 import { buildInitSystemPrompt } from "../prompts/init-system.js";
@@ -20,6 +22,7 @@ const ALWAYS_ALLOWED_TOOLS = [
   "Grep",
   "Glob",
   "mcp__revu__report_finding",
+  "mcp__revu__mark_finding_resolved",
 ];
 
 const RESTRICTED_TOOLSET = ["Read", "Grep", "Glob", "Bash"];
@@ -51,6 +54,8 @@ export const claudeCodeProvider: ReviewAgentFactory = (cfg) => ({
             ruleId: input.ruleId,
             rulesContent: input.rulesContent,
             reviewTarget: input.reviewTarget,
+            ...(input.priorFindings ? { priorFindings: input.priorFindings } : {}),
+            ...(input.priorHeadSha ? { priorHeadSha: input.priorHeadSha } : {}),
           }),
           tools: RESTRICTED_TOOLSET,
           allowedTools: ALWAYS_ALLOWED_TOOLS,
@@ -65,6 +70,13 @@ export const claudeCodeProvider: ReviewAgentFactory = (cfg) => ({
             },
           },
           canUseTool: async (toolName, toolInput) => {
+            if (toolName === "Read") {
+              const decision = checkReadInput(toolInput);
+              if (!decision.allow) {
+                return { behavior: "deny", message: decision.reason };
+              }
+              return { behavior: "allow", updatedInput: toolInput };
+            }
             if (toolName === "Bash") {
               const command = typeof toolInput.command === "string" ? toolInput.command : "";
               if (isReadOnlyShellCommand(command)) {
@@ -244,6 +256,75 @@ const FORBIDDEN_GIT_SUBCOMMANDS = new Set([
   "hash-object",
 ]);
 
+/**
+ * Pre-flight gate for the Read tool. Two failure modes in the Agent SDK's Read
+ * tool turn into session-fatal `error_during_execution` rather than recoverable
+ * tool errors:
+ *
+ *   1. `MaxFileReadTokenExceededError` — the SDK's own context-protection guard
+ *      throws when a file exceeds its 25k-token cap. The throw is converted to
+ *      a session-level error result, killing the rule mid-review.
+ *   2. `EISDIR` — the Read tool calls `readFileSync` without an `isDirectory()`
+ *      check. Same upshot: throws, propagated as session error.
+ *
+ * Both are recoverable in principle. Detect the conditions ourselves before the
+ * SDK's tool runs and return a `canUseTool` denial with a useful message; the
+ * agent receives a normal tool-error result, adapts, and continues.
+ *
+ * Heuristic: 4 chars per token, soft cap at 20k tokens (~80 KB) to leave
+ * headroom under the SDK's 25k. Bypass the size check if the agent already
+ * passed `limit` — they're chunking on purpose and the SDK will only emit the
+ * requested slice.
+ */
+const APPROX_BYTES_PER_TOKEN = 4;
+const READ_SOFT_TOKEN_CAP = 20_000;
+const READ_SOFT_BYTE_CAP = APPROX_BYTES_PER_TOKEN * READ_SOFT_TOKEN_CAP;
+
+export type ReadGateDecision =
+  | { allow: true }
+  | { allow: false; reason: string };
+
+export function checkReadInput(toolInput: Record<string, unknown>): ReadGateDecision {
+  const filePath = toolInput["file_path"];
+  if (typeof filePath !== "string" || filePath.length === 0) {
+    // Bad input — let the SDK surface its own validation error.
+    return { allow: true };
+  }
+
+  let st;
+  try {
+    st = statSync(filePath);
+  } catch {
+    // Missing / permission denied / etc. — let the SDK surface the canonical
+    // error so the agent gets the standard "no such file" experience.
+    return { allow: true };
+  }
+
+  if (st.isDirectory()) {
+    return {
+      allow: false,
+      reason:
+        `${filePath} is a directory, not a file. Use \`Glob\` (e.g. \`Glob "${filePath}/**/*"\`) ` +
+        `or \`Bash: ls ${filePath}\` to list its contents, then Read a specific file.`,
+    };
+  }
+
+  const hasLimit = typeof toolInput["limit"] === "number" && (toolInput["limit"] as number) > 0;
+  if (!hasLimit && st.size > READ_SOFT_BYTE_CAP) {
+    const approxTokens = Math.round(st.size / APPROX_BYTES_PER_TOKEN);
+    return {
+      allow: false,
+      reason:
+        `${filePath} is ${st.size} bytes (~${approxTokens} tokens) — too large to Read all at once ` +
+        `(the underlying cap is 25,000 tokens; reading more aborts the review). ` +
+        `Either Read with \`offset\`/\`limit\` (e.g. \`limit: 500\`) to chunk, or use \`Grep\` for content search, ` +
+        `or skip this file unless it's central to your rule.`,
+    };
+  }
+
+  return { allow: true };
+}
+
 export function isReadOnlyShellCommand(command: string): boolean {
   const trimmed = command.trim();
   if (trimmed.length === 0) return false;
@@ -324,19 +405,6 @@ function summarizeToolInput(name: string, input: unknown): string {
   }
 }
 
-/**
- * The scaffold agent is allowed to call `Write`, but only on `.revu.md` files
- * that resolve to a path inside the repo root. Anything else is denied.
- */
-export function isAllowedRuleFileWrite(repoRoot: string, filePath: unknown): boolean {
-  if (typeof filePath !== "string" || filePath.length === 0) return false;
-  if (!/\.revu\.md$/.test(filePath)) return false;
-  const abs = isAbsolute(filePath) ? filePath : resolve(repoRoot, filePath);
-  const rel = relative(resolve(repoRoot), abs);
-  if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) return false;
-  return true;
-}
-
 const SCAFFOLD_TOOLSET = ["Read", "Grep", "Glob", "Bash", "Write"];
 const SCAFFOLD_ALWAYS_ALLOWED = ["Read", "Grep", "Glob"];
 
@@ -369,6 +437,13 @@ export const claudeCodeScaffoldProvider: ScaffoldAgentFactory = (cfg) => ({
           tools: SCAFFOLD_TOOLSET,
           allowedTools: SCAFFOLD_ALWAYS_ALLOWED,
           canUseTool: async (toolName, toolInput) => {
+            if (toolName === "Read") {
+              const decision = checkReadInput(toolInput as Record<string, unknown>);
+              if (!decision.allow) {
+                return { behavior: "deny", message: decision.reason };
+              }
+              return { behavior: "allow", updatedInput: toolInput };
+            }
             if (toolName === "Bash") {
               const command = typeof toolInput["command"] === "string" ? (toolInput["command"] as string) : "";
               if (isReadOnlyShellCommand(command)) {

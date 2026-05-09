@@ -75,7 +75,14 @@ function listFromGit(repoRoot: string, pattern: string): string[] {
     ],
     { cwd: repoRoot, encoding: "utf8", maxBuffer: 256 * 1024 * 1024 },
   );
-  return out.split("\0").filter(Boolean).sort();
+  // `git ls-files -c` lists tracked-but-deleted-from-working-tree paths
+  // (rule file deleted locally without committing the deletion). Skip those —
+  // discovery's contract is "give me rule files I can read right now."
+  return out
+    .split("\0")
+    .filter(Boolean)
+    .filter((rel) => existsSync(resolve(repoRoot, rel)))
+    .sort();
 }
 
 async function listFromFs(repoRoot: string, pattern: string): Promise<string[]> {

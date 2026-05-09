@@ -1,8 +1,9 @@
 import { z } from "zod";
+import { SEVERITIES } from "../types.js";
 
 export const ReportFindingShape = {
   severity: z
-    .enum(["aesthetic", "low", "medium", "high", "critical"])
+    .enum(SEVERITIES)
     .describe("Severity of the finding."),
   path: z.string().min(1).describe("Repo-relative file path, forward-slash separated."),
   line: z
@@ -19,10 +20,58 @@ export const ReportFindingShape = {
     .describe("1-indexed line number where the issue ends. If set, line must also be set."),
   message: z.string().min(1).describe("Human-readable description of the issue."),
   category: z.string().optional().describe("Optional free-form category tag."),
+  priorFp: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "Set ONLY when this finding is a moved version of a finding that was reported in a previous run (line/location shifted but it's the same logical issue). Pass the prior finding's fingerprint here so the runner can correlate them.",
+    ),
 } as const;
 
 export const ReportFindingObject = z.object(ReportFindingShape);
 export type ReportFindingInput = z.infer<typeof ReportFindingObject>;
+
+export const MarkResolvedShape = {
+  fingerprint: z
+    .string()
+    .min(1)
+    .describe("The fingerprint of the prior finding being marked resolved."),
+  reason: z
+    .enum(["fixed", "stale"])
+    .optional()
+    .describe(
+      "Why this finding is being marked resolved. `fixed` = the new commits address it. `stale` = the rule's premise no longer holds (file deleted, etc.). Defaults to `fixed`.",
+    ),
+} as const;
+
+export const MarkResolvedObject = z.object(MarkResolvedShape);
+export type MarkResolvedInput = z.infer<typeof MarkResolvedObject>;
+
+export const MARK_RESOLVED_DESCRIPTION = `Mark a previously-reported finding as resolved.
+Use this when reviewing prior findings provided in your system prompt: if the new commits in this PR have addressed an issue you flagged on a previous run, call this tool with the prior finding's fingerprint.
+Do NOT use this tool for findings that are still open at the same location — just stay silent and the runner will keep them open.
+Do NOT use this tool for findings that have moved to a new location — instead emit a fresh \`report_finding\` with the prior fingerprint passed via \`priorFp\`.`;
+
+export const WriteRuleFileShape = {
+  path: z
+    .string()
+    .min(1)
+    .describe(
+      "Repo-relative path of the rule file to create. MUST end in `.revu.md`. Globals go in `.revu/<topic>.revu.md`; locals go alongside the thing they cover as `<dir>/<topic>.revu.md`.",
+    ),
+  content: z
+    .string()
+    .describe("Full Markdown content of the rule file."),
+} as const;
+
+export const WriteRuleFileObject = z.object(WriteRuleFileShape);
+export type WriteRuleFileInput = z.infer<typeof WriteRuleFileObject>;
+
+export const WRITE_RULE_FILE_DESCRIPTION = `Create a revu-ai rule file at the given repo-relative path.
+The path MUST end in \`.revu.md\` and resolve inside the repository (server enforces this; out-of-tree paths are rejected).
+Globals: \`.revu/<topic>.revu.md\`. Locals: \`<sub-service-dir>/<topic>.revu.md\` directly inside that directory.
+Use this instead of any built-in file-writing tool — only this path is safety-checked by revu-ai.`;
 
 export const REPORT_FINDING_DESCRIPTION = `Report a code-review finding to the revu-ai runner.
 Call this tool once for each issue you find. The runner aggregates findings across all reviewers.

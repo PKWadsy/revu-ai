@@ -1,4 +1,3 @@
-import { writeFileSync } from "node:fs";
 import type { RunReport, Severity } from "../types.js";
 
 const COLOR_ENABLED = process.stdout.isTTY && !process.env.NO_COLOR;
@@ -36,7 +35,7 @@ const SEV_LABEL: Record<Severity, string> = {
   critical: "CRIT",
 };
 
-export function emitPretty(report: RunReport, outputFile?: string): void {
+export function emitPretty(report: RunReport): void {
   const lines: string[] = [];
 
   lines.push(paint("bold", `revu-ai ${report.runId.slice(0, 8)}`));
@@ -101,12 +100,7 @@ export function emitPretty(report: RunReport, outputFile?: string): void {
     lines.push("");
   }
 
-  const text = lines.join("\n") + "\n";
-  process.stdout.write(text);
-  if (outputFile) {
-    // Strip ANSI codes for file output.
-    writeFileSync(outputFile, text.replace(/\x1b\[[0-9;]*m/g, ""), "utf8");
-  }
+  process.stdout.write(lines.join("\n") + "\n");
 }
 
 function detectSystemicFailure(report: RunReport): { scope: string; message: string } | undefined {

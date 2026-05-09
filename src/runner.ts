@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { findRepoRoot, resolveTarget, isReviewEmpty } from "./refs.js";
 import { discoverRules } from "./discovery.js";
 import { startSidecar } from "./mcp/server.js";
-import { getProviderFactory } from "./providers/registry.js";
+import { getHarnessFactory } from "./providers/registry.js";
 import { createLimiter } from "./concurrency.js";
 import { SEVERITY_ORDER } from "./types.js";
 import type {
@@ -35,7 +35,13 @@ export interface RunHooks {
   onFinding?: (finding: Finding) => void;
 }
 
-export async function run(cwd: string, config: RevuConfig, hooks: RunHooks = {}): Promise<RunnerResult> {
+export interface RunInputs {
+  /** Optional prior-run report. When present, each rule's open prior findings are
+   *  threaded into that rule's reviewer agent for cross-run reasoning. */
+  priorReport?: RunReport;
+}
+
+export async function run(cwd: string, config: RevuConfig, hooks: RunHooks = {}, inputs: RunInputs = {}): Promise<RunnerResult> {
   const startedAt = new Date().toISOString();
   const runId = randomUUID();
   const repoRoot = findRepoRoot(cwd);
@@ -55,12 +61,31 @@ export async function run(cwd: string, config: RevuConfig, hooks: RunHooks = {})
     throw new RevuExit("No changes to review.", 0);
   }
 
+  // Group prior findings by ruleId so each agent only sees its own.
+  const priorByRule = new Map<string, Finding[]>();
+  if (inputs.priorReport) {
+    const resolvedFps = new Set(
+      inputs.priorReport.resolutions?.map((r) => `${r.ruleId}\0${r.fingerprint}`) ?? [],
+    );
+    for (const f of inputs.priorReport.findings) {
+      // Skip findings that the prior report already marked resolved.
+      if (resolvedFps.has(`${f.ruleId}\0${f.fingerprint}`)) continue;
+      const list = priorByRule.get(f.ruleId);
+      if (list) list.push(f);
+      else priorByRule.set(f.ruleId, [f]);
+    }
+  }
+  const priorHeadSha = inputs.priorReport?.reviewTarget.headSha;
+
   const sidecar = await startSidecar({ repoRoot });
   const unsubscribeFindings = hooks.onFinding
     ? sidecar.aggregator.onAdd(hooks.onFinding)
     : () => {};
-  const factory = getProviderFactory(config.provider);
-  const provider = factory({ ...(config.model ? { model: config.model } : {}) });
+  const factory = getHarnessFactory(config.harness);
+  const provider = factory({
+    ...(config.model ? { model: config.model } : {}),
+    ...(config.provider ? { provider: config.provider } : {}),
+  });
 
   const concurrency = config.concurrency ?? Math.min(8, rules.length);
   const limit = createLimiter(concurrency);
@@ -72,27 +97,51 @@ export async function run(cwd: string, config: RevuConfig, hooks: RunHooks = {})
       rules.map((rule) =>
         limit(async () => {
           hooks.onRuleStart?.(rule.ruleId, rule.relPath);
-          const result = await provider.run({
-            ruleId: rule.ruleId,
-            rulesFilePath: rule.absPath,
-            rulesContent: rule.content,
-            reviewTarget: resolved.target,
-            repoRoot,
-            mcp: { url: sidecar.url, authToken: sidecar.authToken },
-            timeoutMs: config.timeoutMs,
-            ...(hooks.onActivity
-              ? { onActivity: (a) => hooks.onActivity?.(rule.ruleId, a) }
-              : {}),
-          });
-          const ruleResult: RuleResult = {
-            id: result.ruleId,
-            path: rule.relPath,
-            ok: result.ok,
-            durationMs: result.durationMs,
-            findingCount: sidecar.aggregator.countFor(result.ruleId),
-            ...(result.errorMessage ? { errorMessage: result.errorMessage } : {}),
-            ...(result.timedOut ? { timedOut: true } : {}),
-          };
+          const priorForRule = priorByRule.get(rule.ruleId);
+          const ruleStart = Date.now();
+
+          // Per-rule isolation: a provider that throws (bug, runtime
+          // error, anything we didn't anticipate) must not abort the
+          // whole run. Catch here, convert to an errored RuleResult, and
+          // let the other rules finish. The provider's own contract is
+          // already to return ReviewResult with `ok:false` on expected
+          // failures — this is the safety net for unexpected ones.
+          let ruleResult: RuleResult;
+          try {
+            const result = await provider.run({
+              ruleId: rule.ruleId,
+              rulesFilePath: rule.absPath,
+              rulesContent: rule.content,
+              reviewTarget: resolved.target,
+              repoRoot,
+              mcp: { url: sidecar.url, authToken: sidecar.authToken },
+              timeoutMs: config.timeoutMs,
+              ...(hooks.onActivity
+                ? { onActivity: (a) => hooks.onActivity?.(rule.ruleId, a) }
+                : {}),
+              ...(priorForRule && priorForRule.length > 0 ? { priorFindings: priorForRule } : {}),
+              ...(priorHeadSha ? { priorHeadSha } : {}),
+            });
+            ruleResult = {
+              id: result.ruleId,
+              path: rule.relPath,
+              ok: result.ok,
+              durationMs: result.durationMs,
+              findingCount: sidecar.aggregator.countFor(result.ruleId),
+              ...(result.errorMessage ? { errorMessage: result.errorMessage } : {}),
+              ...(result.timedOut ? { timedOut: true } : {}),
+            };
+          } catch (e) {
+            const message = (e as Error)?.stack ?? (e as Error)?.message ?? String(e);
+            ruleResult = {
+              id: rule.ruleId,
+              path: rule.relPath,
+              ok: false,
+              durationMs: Date.now() - ruleStart,
+              findingCount: sidecar.aggregator.countFor(rule.ruleId),
+              errorMessage: `unexpected error: ${message.split("\n")[0]}`,
+            };
+          }
           ruleResults.push(ruleResult);
           hooks.onRuleEnd?.(ruleResult);
         }),
@@ -104,15 +153,17 @@ export async function run(cwd: string, config: RevuConfig, hooks: RunHooks = {})
   }
 
   const findings: Finding[] = sidecar.aggregator.all();
+  const resolutions = sidecar.aggregator.allResolutions();
 
   const report: RunReport = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     runId,
     startedAt,
     completedAt: new Date().toISOString(),
     reviewTarget: { ...resolved, mode: resolved.target.mode },
     rules: ruleResults.sort((a, b) => a.id.localeCompare(b.id)),
     findings: findings.sort(findingSort),
+    resolutions,
   };
 
   const exitCode = computeExitCode(findings, ruleResults, config.failOn);

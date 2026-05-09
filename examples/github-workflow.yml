@@ -1,10 +1,16 @@
-# Drop this into `.github/workflows/revu-ai.yml` in any repo where you want
-# revu-ai to run on PRs. Findings render as PR annotations because the `github`
-# formatter emits workflow commands.
+# Drop this into `.github/workflows/revu-ai.yml` to run revu-ai on every PR
+# and post findings as a single bundled PR review.
 #
-# You'll need to set ANTHROPIC_API_KEY (or your provider's equivalent) as
-# a repository secret. The workflow uses --base origin/$BASE_REF so revu-ai
-# reviews the full PR.
+# Cross-run state: actions/cache restores the prior --output-file report
+# (so reviewers see their previous open findings as system-prompt context;
+# the post step PATCHes existing comments instead of always creating fresh
+# ones — resolved findings get marked with strikethrough + ✅ footer; moved
+# findings get repointed to the new line).
+#
+# Setup:
+#   1. Add `ANTHROPIC_API_KEY` as a repository secret.
+#   2. The `permissions:` block below grants the default $GITHUB_TOKEN
+#      enough scope to leave PR review comments — no PAT needed.
 name: revu-ai
 
 on:
@@ -12,7 +18,7 @@ on:
 
 permissions:
   contents: read
-  pull-requests: write   # so annotations land on the PR
+  pull-requests: write
 
 jobs:
   review:
@@ -20,8 +26,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          # Need full history so origin/<base> is available for the diff.
-          fetch-depth: 0
+          fetch-depth: 0   # need full history so origin/<base> is available for the diff
 
       - uses: actions/setup-node@v4
         with:
@@ -29,10 +34,46 @@ jobs:
 
       - run: npm install -g revu-ai
 
+      - name: Restore prior revu-ai report
+        uses: actions/cache@v4
+        with:
+          path: /tmp/revu-prior.json
+          # Per-run key forces a fresh save; restore-keys prefix picks up the most-recent prior.
+          key: revu-ai-pr-${{ github.event.pull_request.number }}-${{ github.run_id }}
+          restore-keys: |
+            revu-ai-pr-${{ github.event.pull_request.number }}-
+
       - name: Run revu-ai
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           BASE_REF: ${{ github.event.pull_request.base.ref }}
         run: |
           git fetch origin "$BASE_REF":"refs/remotes/origin/$BASE_REF"
-          revu-ai --base "origin/$BASE_REF" --output github --fail-on high
+          PRIOR_FLAG=""
+          if [ -f /tmp/revu-prior.json ]; then
+            PRIOR_FLAG="--prior-report /tmp/revu-prior.json"
+          fi
+          revu-ai \
+            --base "origin/$BASE_REF" \
+            --output json \
+            --output-file /tmp/revu.json \
+            $PRIOR_FLAG
+        # Note: `if: always()` on the post step below already keeps it running
+        # if this step exits non-zero, so findings still land on the PR.
+
+      - name: Post review comments
+        if: always()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PRIOR_FLAG=""
+          if [ -f /tmp/revu-prior.json ]; then
+            PRIOR_FLAG="--prior-report /tmp/revu-prior.json"
+          fi
+          revu-ai github post \
+            --report /tmp/revu.json \
+            --output-file /tmp/revu-post.json \
+            $PRIOR_FLAG
+          cp /tmp/revu-post.json /tmp/revu-prior.json   # cache pickup for next run
+        # To make the PR check itself blocking, add:
+        #   --request-changes high

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { resolve } from "node:path";
-import { isAllowedRuleFileWrite } from "../src/providers/claude-code.js";
+import { isAllowedRuleFileWrite } from "../src/scaffold-paths.js";
 
 const repoRoot = resolve("/tmp/revu-allowlist-fixture");
 

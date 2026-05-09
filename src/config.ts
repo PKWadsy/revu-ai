@@ -1,20 +1,14 @@
 import { readFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
-import type { RevuConfig, Severity } from "./types.js";
+import { SEVERITIES, type RevuConfig, type Severity } from "./types.js";
 
-const SEVERITIES: ReadonlySet<Severity> = new Set([
-  "aesthetic",
-  "low",
-  "medium",
-  "high",
-  "critical",
-]);
+const SEVERITY_SET: ReadonlySet<Severity> = new Set(SEVERITIES);
 
 export const DEFAULT_CONFIG: RevuConfig = {
   pattern: "**/*.revu.md",
   workingTree: false,
   staged: false,
-  provider: "claude-code",
+  harness: "claude-code",
   output: "auto",
   failOn: "high",
   force: false,
@@ -26,6 +20,7 @@ export interface CliOverrides {
   workingTree?: boolean;
   staged?: boolean;
   pattern?: string;
+  harness?: string;
   provider?: string;
   model?: string;
   concurrency?: number;
@@ -35,6 +30,7 @@ export interface CliOverrides {
   force?: boolean;
   config?: string;
   timeoutMs?: number;
+  priorReport?: string;
 }
 
 export function loadConfig(repoRoot: string, overrides: CliOverrides): RevuConfig {
@@ -60,6 +56,7 @@ export function loadConfig(repoRoot: string, overrides: CliOverrides): RevuConfi
   if (overrides.base !== undefined) merged.base = overrides.base;
   if (overrides.workingTree !== undefined) merged.workingTree = overrides.workingTree;
   if (overrides.staged !== undefined) merged.staged = overrides.staged;
+  if (overrides.harness !== undefined) merged.harness = overrides.harness;
   if (overrides.provider !== undefined) merged.provider = overrides.provider;
   if (overrides.model !== undefined) merged.model = overrides.model;
   if (overrides.concurrency !== undefined) merged.concurrency = overrides.concurrency;
@@ -67,10 +64,11 @@ export function loadConfig(repoRoot: string, overrides: CliOverrides): RevuConfi
   if (overrides.outputFile !== undefined) merged.outputFile = overrides.outputFile;
   if (overrides.force !== undefined) merged.force = overrides.force;
   if (overrides.timeoutMs !== undefined) merged.timeoutMs = overrides.timeoutMs;
+  if (overrides.priorReport !== undefined) merged.priorReport = overrides.priorReport;
   if (overrides.failOn !== undefined) {
-    if (!SEVERITIES.has(overrides.failOn as Severity)) {
+    if (!SEVERITY_SET.has(overrides.failOn as Severity)) {
       throw new Error(
-        `Invalid --fail-on value: ${overrides.failOn}. Expected one of: ${[...SEVERITIES].join(", ")}`,
+        `Invalid --fail-on value: ${overrides.failOn}. Expected one of: ${SEVERITIES.join(", ")}`,
       );
     }
     merged.failOn = overrides.failOn as Severity;
