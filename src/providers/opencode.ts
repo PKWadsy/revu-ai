@@ -147,11 +147,13 @@ export const opencodeProvider: ReviewAgentFactory = (cfg: OpencodeConfig) => ({
       // tells opencode "yes, this model id is valid", letting users pin to
       // models the baked-in models.dev cache may not list yet (e.g.,
       // `grok-4-1-fast-reasoning` at the time of writing).
-      provider: {
-        [providerID]: {
-          models: { [modelID]: {} },
-        },
-      },
+      //
+      // `options.timeout` extends opencode's per-LLM-call HTTP timeout to
+      // match the user's per-rule budget. opencode defaults to 5 min, which
+      // a slow inference call can blow through; the failure surfaces as
+      // `errorMessage: "fetch failed"` and the rule errors. Aligning both
+      // timeouts means revu's `--timeout-ms` is the single boundary.
+      provider: providerConfig(providerID, modelID, input.timeoutMs),
       permission: {
         edit: "deny",
         bash: READ_ONLY_BASH,
@@ -283,12 +285,9 @@ export const opencodeScaffoldProvider: ScaffoldAgentFactory = (cfg: OpencodeConf
         },
       },
       // See review path comment — auto-register the requested model so
-      // opencode's catalog lag doesn't reject newly-released model ids.
-      provider: {
-        [providerID]: {
-          models: { [modelID]: {} },
-        },
-      },
+      // opencode's catalog lag doesn't reject newly-released model ids,
+      // and align the per-LLM-call HTTP timeout with the per-rule budget.
+      provider: providerConfig(providerID, modelID, input.timeoutMs),
       permission: {
         edit: "deny",
         bash: READ_ONLY_BASH,
@@ -416,6 +415,22 @@ function parseModel(cfg: OpencodeConfig): { providerID: string; modelID: string 
     );
   }
   return { providerID: provider, modelID: model };
+}
+
+/** Build the inline `provider` block for opencode's Config: registers the
+ *  exact model id under the chosen provider and (when the caller supplied a
+ *  per-rule timeout) extends opencode's per-LLM-call HTTP timeout to match. */
+function providerConfig(
+  providerID: string,
+  modelID: string,
+  timeoutMs: number | undefined,
+): NonNullable<Config["provider"]> {
+  return {
+    [providerID]: {
+      models: { [modelID]: {} },
+      ...(timeoutMs && timeoutMs > 0 ? { options: { timeout: timeoutMs } } : {}),
+    },
+  };
 }
 
 interface EventLoopHandle { stop: () => void }
