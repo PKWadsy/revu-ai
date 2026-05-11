@@ -248,6 +248,7 @@ export const opencodeProvider: ReviewAgentFactory = (cfg: OpencodeConfig) => ({
             reviewTarget: input.reviewTarget,
             ...(input.priorFindings ? { priorFindings: input.priorFindings } : {}),
             ...(input.priorHeadSha ? { priorHeadSha: input.priorHeadSha } : {}),
+            ...(input.filePatterns ? { filePatterns: input.filePatterns } : {}),
           }),
           tools: REVIEW_TOOL_OVERRIDES,
           parts: [{ type: "text", text: buildUserPrompt(input.reviewTarget) }],

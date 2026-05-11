@@ -65,6 +65,32 @@ Flag any newly added log statement that:
 - `medium` for `console.log` instead of the project logger
 ```
 
+### Scoping a rule to specific files
+
+Add a YAML frontmatter block at the very top of the file to restrict the rule to files matching glob patterns. The runner skips the rule entirely if none of the changed files match, avoiding unnecessary agent spawns.
+
+```markdown
+---
+files:
+  - "**/*.ts"
+  - "**/*.tsx"
+---
+# TypeScript naming conventions
+
+Flag exported symbols that don't follow the project naming guide.
+```
+
+Single-pattern shorthand:
+
+```markdown
+---
+files: "src/api/**/*.py"
+---
+# Python API contract enforcement
+```
+
+The `files:` patterns are matched against repo-root-relative paths of the changed files (the same paths you'd see in `git diff --name-only`). The rule agent is also told to focus only on matching files.
+
 The agent is told to only report findings that match the rule. If your diff has no logging changes, this rule will silently pass.
 
 ## How it works

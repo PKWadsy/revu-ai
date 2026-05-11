@@ -5,6 +5,7 @@ import { startSidecar } from "./mcp/server.js";
 import { getHarnessFactory } from "./providers/registry.js";
 import { createLimiter } from "./concurrency.js";
 import { SEVERITY_ORDER } from "./types.js";
+import micromatch from "micromatch";
 import type {
   Finding,
   RevuConfig,
@@ -100,6 +101,25 @@ export async function run(cwd: string, config: RevuConfig, hooks: RunHooks = {},
           const priorForRule = priorByRule.get(rule.ruleId);
           const ruleStart = Date.now();
 
+          // Skip this rule if it declares file patterns but none of the changed
+          // files match. This avoids spawning an agent that would have nothing to do.
+          if (rule.filePatterns && rule.filePatterns.length > 0) {
+            const matchingFiles = micromatch(resolved.changedFiles, rule.filePatterns);
+            if (matchingFiles.length === 0) {
+              const skipped: RuleResult = {
+                id: rule.ruleId,
+                path: rule.relPath,
+                ok: true,
+                durationMs: 0,
+                findingCount: 0,
+                skipped: true,
+              };
+              ruleResults.push(skipped);
+              hooks.onRuleEnd?.(skipped);
+              return;
+            }
+          }
+
           // Per-rule isolation: a provider that throws (bug, runtime
           // error, anything we didn't anticipate) must not abort the
           // whole run. Catch here, convert to an errored RuleResult, and
@@ -121,6 +141,7 @@ export async function run(cwd: string, config: RevuConfig, hooks: RunHooks = {},
                 : {}),
               ...(priorForRule && priorForRule.length > 0 ? { priorFindings: priorForRule } : {}),
               ...(priorHeadSha ? { priorHeadSha } : {}),
+              ...(rule.filePatterns ? { filePatterns: rule.filePatterns } : {}),
             });
             ruleResult = {
               id: result.ruleId,

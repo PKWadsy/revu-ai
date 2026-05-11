@@ -225,3 +225,73 @@ describe("runner — priorReport flow", () => {
     }
   });
 });
+
+describe("runner — filePatterns filtering", () => {
+  let filterDir: string;
+
+  beforeEach(() => {
+    filterDir = mkdtempSync(join(tmpdir(), "revu-runner-filter-"));
+    git(filterDir, "init", "-q");
+    git(filterDir, "symbolic-ref", "HEAD", "refs/heads/main");
+    git(filterDir, "config", "user.email", "test@example.com");
+    git(filterDir, "config", "user.name", "Test");
+    git(filterDir, "commit", "--allow-empty", "-m", "initial");
+    git(filterDir, "remote", "add", "origin", filterDir);
+    git(filterDir, "fetch", "origin", "-q");
+
+    mkdirSync(join(filterDir, ".revu"), { recursive: true });
+    // Rule scoped to .ts files only (via frontmatter)
+    writeFileSync(
+      join(filterDir, ".revu", "ts-rule.revu.md"),
+      '---\nfiles: "**/*.ts"\n---\n# TS rule\n',
+    );
+    // Rule with no file filter
+    writeFileSync(join(filterDir, ".revu", "all-rule.revu.md"), "# All files rule\n");
+    // Change only a .py file — ts-rule should be skipped
+    writeFileSync(join(filterDir, "script.py"), "print('hello')\n");
+    git(filterDir, "add", ".");
+    git(filterDir, "commit", "-m", "feat");
+
+    registerHarness("mock-filter", makeMockProvider({
+      ".revu/ts-rule": [
+        { severity: "high", path: "script.py", message: "should-not-appear" },
+      ],
+      ".revu/all-rule": [
+        { severity: "low", path: "script.py", message: "all-rule-finding" },
+      ],
+    }));
+  });
+
+  afterEach(() => {
+    unregisterHarness("mock-filter");
+    rmSync(filterDir, { recursive: true, force: true });
+  });
+
+  it("skips rules whose filePatterns do not match any changed files", async () => {
+    const { report } = await run(filterDir, {
+      pattern: "**/*.revu.md",
+      harness: "mock-filter",
+      workingTree: false,
+      staged: false,
+      output: "json",
+      failOn: "high",
+      force: false,
+      timeoutMs: 60_000,
+    });
+
+    // ts-rule should be marked skipped, not run.
+    const tsRule = report.rules.find((r) => r.id === ".revu/ts-rule");
+    expect(tsRule?.skipped).toBe(true);
+    expect(tsRule?.ok).toBe(true);
+
+    // all-rule should have run and produced a finding.
+    const allRule = report.rules.find((r) => r.id === ".revu/all-rule");
+    expect(allRule?.skipped).toBeUndefined();
+    expect(allRule?.ok).toBe(true);
+
+    // No findings from ts-rule since it was skipped.
+    expect(report.findings.some((f) => f.ruleId === ".revu/ts-rule")).toBe(false);
+    // all-rule finding should be present.
+    expect(report.findings.some((f) => f.ruleId === ".revu/all-rule")).toBe(true);
+  });
+});

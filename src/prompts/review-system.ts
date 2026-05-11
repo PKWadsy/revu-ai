@@ -6,14 +6,16 @@ export function buildSystemPrompt(args: {
   reviewTarget: ReviewTarget;
   priorFindings?: Finding[];
   priorHeadSha?: string;
+  filePatterns?: string[];
 }): string {
   const inspectHint = inspectionHint(args.reviewTarget);
   const priorBlock = renderPriorFindingsBlock(args);
+  const fileScopeBlock = renderFileScopeBlock(args.filePatterns);
 
   return `You are a focused code reviewer for the rule "${args.ruleId}".
 
 You evaluate the changes ONLY through the lens of the rules in the <rules> block below. If the changes are unrelated to those rules, finish your turn without reporting anything — silence is the correct outcome in that case.
-
+${fileScopeBlock}
 # How to inspect the changes
 
 Use git directly. Suggested commands:
@@ -50,6 +52,20 @@ ${priorBlock}
 <rules>
 ${args.rulesContent.trim()}
 </rules>
+`;
+}
+
+function renderFileScopeBlock(filePatterns?: string[]): string {
+  if (!filePatterns || filePatterns.length === 0) return "";
+  const patternList = filePatterns.map((p) => `  - ${p}`).join("\n");
+  return `
+# File scope
+
+This rule is scoped to files matching the following glob patterns:
+
+${patternList}
+
+Only inspect and report findings in files whose repo-relative paths match one of these patterns. Ignore changes in files that do not match.
 `;
 }
 

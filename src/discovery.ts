@@ -29,11 +29,14 @@ export async function discoverRules(repoRoot: string, pattern: string): Promise<
 
   return matches.map((rel): RuleFile => {
     const abs = resolve(repoRoot, rel);
+    const rawContent = readFileSync(abs, "utf8");
+    const { content, filePatterns } = parseFrontmatter(rawContent);
     return {
       ruleId: deriveRuleId(rel),
       absPath: abs,
       relPath: rel,
-      content: readFileSync(abs, "utf8"),
+      content,
+      ...(filePatterns !== undefined ? { filePatterns } : {}),
     };
   });
 }
@@ -106,6 +109,66 @@ function deriveRuleId(relPath: string): string {
   const withoutSuffix = relPath.replace(/\.revu\.md$/i, "");
   const parts = withoutSuffix.split(sep).filter((p) => p && p !== ".");
   return parts.join("/");
+}
+
+/**
+ * Parse YAML-style frontmatter from a `.revu.md` file.
+ *
+ * Supports these `files:` shapes:
+ *   files: "**\/*.ts"                    — single quoted string
+ *   files: **\/*.ts                      — single unquoted string
+ *   files: ["**\/*.ts", "**\/*.tsx"]     — inline JSON array
+ *   files:
+ *     - "**\/*.ts"
+ *     - "**\/*.tsx"                      — YAML block list
+ *
+ * Returns the file content with frontmatter stripped, and the parsed patterns.
+ */
+export function parseFrontmatter(rawContent: string): { content: string; filePatterns?: string[] } {
+  // Frontmatter must start at the very beginning of the file.
+  const fmMatch = rawContent.match(/^---[ \t]*\r?\n([\s\S]*?)\n---[ \t]*(\r?\n|$)/);
+  if (!fmMatch) return { content: rawContent };
+
+  const frontmatterBlock = fmMatch[1] ?? "";
+  const body = rawContent.slice(fmMatch[0].length);
+  const filePatterns = parseFrontmatterFiles(frontmatterBlock);
+  return { content: body, filePatterns };
+}
+
+function parseFrontmatterFiles(frontmatter: string): string[] | undefined {
+  // Inline JSON array: files: ["**/*.ts", "**/*.tsx"]
+  const inlineArrayMatch = frontmatter.match(/^files:\s*\[([^\]]*)\]/m);
+  if (inlineArrayMatch) {
+    const patterns = (inlineArrayMatch[1] ?? "")
+      .split(",")
+      .map((s) => s.trim().replace(/^["']|["']$/g, ""))
+      .filter(Boolean);
+    return patterns.length > 0 ? patterns : undefined;
+  }
+
+  // YAML block list:
+  //   files:
+  //     - pattern1
+  //     - pattern2
+  const blockListMatch = frontmatter.match(/^files:\s*\r?\n((?:[ \t]+-[ \t]+.+\r?\n?)+)/m);
+  if (blockListMatch) {
+    const patterns = (blockListMatch[1] ?? "")
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter((line) => line.startsWith("- "))
+      .map((line) => line.slice(2).trim().replace(/^["']|["']$/g, ""))
+      .filter(Boolean);
+    return patterns.length > 0 ? patterns : undefined;
+  }
+
+  // Single value: files: "pattern" or files: pattern
+  const singleMatch = frontmatter.match(/^files:\s+(.+)$/m);
+  if (singleMatch) {
+    const val = (singleMatch[1] ?? "").trim().replace(/^["']|["']$/g, "");
+    return val ? [val] : undefined;
+  }
+
+  return undefined;
 }
 
 export function _testing_deriveRuleId(rel: string): string {

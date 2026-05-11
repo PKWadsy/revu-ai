@@ -26,6 +26,9 @@ export interface ReviewInput {
   /** SHA at which the prior findings were observed (the head of the previous run). Used in the
    *  prior-findings prompt block to tell the agent the time delta to consider. */
   priorHeadSha?: string;
+  /** Glob patterns (repo-root-relative) from the rule file's `files:` frontmatter.
+   *  When present, the agent should only report findings in files matching these patterns. */
+  filePatterns?: string[];
 }
 
 export interface ReviewResult {

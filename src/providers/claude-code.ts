@@ -56,6 +56,7 @@ export const claudeCodeProvider: ReviewAgentFactory = (cfg) => ({
             reviewTarget: input.reviewTarget,
             ...(input.priorFindings ? { priorFindings: input.priorFindings } : {}),
             ...(input.priorHeadSha ? { priorHeadSha: input.priorHeadSha } : {}),
+            ...(input.filePatterns ? { filePatterns: input.filePatterns } : {}),
           }),
           tools: RESTRICTED_TOOLSET,
           allowedTools: ALWAYS_ALLOWED_TOOLS,
