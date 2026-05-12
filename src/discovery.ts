@@ -123,6 +123,20 @@ function deriveRuleId(relPath: string): string {
  *     - "**\/*.tsx"                      — YAML block list
  *
  * Returns the file content with frontmatter stripped, and the parsed patterns.
+ *
+ * **Malformed / missing frontmatter** — the parser is intentionally lenient and
+ * always fails-open: if anything is unrecognised the rule simply runs against all
+ * changed files (the safe default).  Specifically:
+ *
+ *   - No `---` delimiters, or delimiters that don't start on the first line →
+ *     content is returned unchanged and `filePatterns` is `undefined`.
+ *   - Frontmatter block with no `files:` key → `filePatterns` is `undefined`.
+ *   - `files:` present but empty (empty string, empty array, empty list) →
+ *     `filePatterns` is `undefined` (treated the same as absent).
+ *   - `files:` present with one or more patterns that are invalid globs →
+ *     patterns are stored as-is; micromatch ignores most invalid patterns and
+ *     the runner wraps the match call in a try/catch so any unexpected throw
+ *     also falls through to running the rule against all files.
  */
 export function parseFrontmatter(rawContent: string): { content: string; filePatterns?: string[] } {
   // Frontmatter must start at the very beginning of the file.
