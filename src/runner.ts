@@ -103,14 +103,25 @@ export async function run(cwd: string, config: RevuConfig, hooks: RunHooks = {},
 
           // Skip this rule if it declares file patterns but none of the changed
           // files match. This avoids spawning an agent that would have nothing to do.
-          // If the patterns are invalid and micromatch throws, we fall through and
-          // run the rule against all files (fail-open: safer than silently skipping).
+          // If the patterns are invalid and micromatch throws, fail the rule so the
+          // user knows about the broken config rather than silently wasting credits.
           if (rule.filePatterns && rule.filePatterns.length > 0) {
             let matchingFiles: string[];
             try {
               matchingFiles = micromatch(resolved.changedFiles, rule.filePatterns);
-            } catch {
-              matchingFiles = resolved.changedFiles;
+            } catch (e) {
+              const msg = (e as Error)?.message ?? String(e);
+              const failed: RuleResult = {
+                id: rule.ruleId,
+                path: rule.relPath,
+                ok: false,
+                durationMs: Date.now() - ruleStart,
+                findingCount: 0,
+                errorMessage: `invalid files: pattern — ${msg}`,
+              };
+              ruleResults.push(failed);
+              hooks.onRuleEnd?.(failed);
+              return;
             }
             if (matchingFiles.length === 0) {
               const skipped: RuleResult = {

@@ -134,9 +134,9 @@ function deriveRuleId(relPath: string): string {
  *   - `files:` present but empty (empty string, empty array, empty list) →
  *     `filePatterns` is `undefined` (treated the same as absent).
  *   - `files:` present with one or more patterns that are invalid globs →
- *     patterns are stored as-is; micromatch ignores most invalid patterns and
- *     the runner wraps the match call in a try/catch so any unexpected throw
- *     also falls through to running the rule against all files.
+ *     patterns are stored as-is; if micromatch throws at match time the runner
+ *     marks the rule as **failed** (`ok: false`) so the broken config surfaces
+ *     immediately instead of silently running the rule against all files.
  */
 export function parseFrontmatter(rawContent: string): { content: string; filePatterns?: string[] } {
   // Frontmatter must start at the very beginning of the file.
