@@ -101,11 +101,28 @@ export async function run(cwd: string, config: RevuConfig, hooks: RunHooks = {},
           const priorForRule = priorByRule.get(rule.ruleId);
           const ruleStart = Date.now();
 
-          // Skip this rule if it declares file patterns but none of the changed
-          // files match. This avoids spawning an agent that would have nothing to do.
-          // If the patterns are invalid and micromatch throws, fail the rule so the
-          // user knows about the broken config rather than silently wasting credits.
-          if (rule.filePatterns && rule.filePatterns.length > 0) {
+          // If the rule declares a files: pattern list, decide whether to run, skip,
+          // or fail before spawning an agent.
+          //   • filePatterns === undefined  → no key in frontmatter → run against all files
+          //   • filePatterns is empty []    → key was present but empty (broken config) → fail
+          //   • micromatch throws           → invalid pattern syntax → fail
+          //   • no changed files match      → skip (nothing to review)
+          if (rule.filePatterns !== undefined) {
+            if (rule.filePatterns.length === 0) {
+              const failed: RuleResult = {
+                id: rule.ruleId,
+                path: rule.relPath,
+                ok: false,
+                durationMs: Date.now() - ruleStart,
+                findingCount: 0,
+                errorMessage:
+                  "files: pattern list is empty — add at least one glob pattern or remove the key",
+              };
+              ruleResults.push(failed);
+              hooks.onRuleEnd?.(failed);
+              return;
+            }
+
             let matchingFiles: string[];
             try {
               matchingFiles = micromatch(resolved.changedFiles, rule.filePatterns);
@@ -123,6 +140,7 @@ export async function run(cwd: string, config: RevuConfig, hooks: RunHooks = {},
               hooks.onRuleEnd?.(failed);
               return;
             }
+
             if (matchingFiles.length === 0) {
               const skipped: RuleResult = {
                 id: rule.ruleId,

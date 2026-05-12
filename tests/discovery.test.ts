@@ -186,6 +186,24 @@ describe("parseFrontmatter", () => {
     expect(filePatterns).toBeUndefined();
   });
 
+  it("returns empty array when files: key is present but has an empty array value", () => {
+    const raw = "---\nfiles: []\n---\n# Rule\n";
+    const { filePatterns } = parseFrontmatter(raw);
+    expect(filePatterns).toEqual([]);
+  });
+
+  it("returns empty array when files: key is present but has an empty string value", () => {
+    const raw = '---\nfiles: ""\n---\n# Rule\n';
+    const { filePatterns } = parseFrontmatter(raw);
+    expect(filePatterns).toEqual([]);
+  });
+
+  it("returns empty array when files: key is present but bare (no value)", () => {
+    const raw = "---\nfiles:\n---\n# Rule\n";
+    const { filePatterns } = parseFrontmatter(raw);
+    expect(filePatterns).toEqual([]);
+  });
+
   it("ignores frontmatter that does not start at the very beginning", () => {
     const raw = "\n---\nfiles: **/*.ts\n---\n# Rule\n";
     const { content, filePatterns } = parseFrontmatter(raw);

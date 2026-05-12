@@ -124,19 +124,19 @@ function deriveRuleId(relPath: string): string {
  *
  * Returns the file content with frontmatter stripped, and the parsed patterns.
  *
- * **Malformed / missing frontmatter** — the parser is intentionally lenient and
- * always fails-open: if anything is unrecognised the rule simply runs against all
- * changed files (the safe default).  Specifically:
+ * **Behaviour by case:**
  *
  *   - No `---` delimiters, or delimiters that don't start on the first line →
- *     content is returned unchanged and `filePatterns` is `undefined`.
- *   - Frontmatter block with no `files:` key → `filePatterns` is `undefined`.
- *   - `files:` present but empty (empty string, empty array, empty list) →
- *     `filePatterns` is `undefined` (treated the same as absent).
- *   - `files:` present with one or more patterns that are invalid globs →
- *     patterns are stored as-is; if micromatch throws at match time the runner
- *     marks the rule as **failed** (`ok: false`) so the broken config surfaces
- *     immediately instead of silently running the rule against all files.
+ *     content is returned unchanged and `filePatterns` is `undefined` (rule
+ *     applies to all changed files).
+ *   - Frontmatter block with no `files:` key → `filePatterns` is `undefined`
+ *     (rule applies to all changed files).
+ *   - `files:` key is present but empty (`files: []`, `files: ""`, bare
+ *     `files:`) → `filePatterns` is `[]` (empty array).  The runner treats this
+ *     as a broken configuration and **fails** the rule so the author is notified
+ *     rather than silently wasting credits.
+ *   - `files:` present with one or more patterns → `filePatterns` is those
+ *     patterns. If micromatch throws at match time the runner also fails the rule.
  */
 export function parseFrontmatter(rawContent: string): { content: string; filePatterns?: string[] } {
   // Frontmatter must start at the very beginning of the file.
@@ -150,14 +150,16 @@ export function parseFrontmatter(rawContent: string): { content: string; filePat
 }
 
 function parseFrontmatterFiles(frontmatter: string): string[] | undefined {
+  // If there is no `files:` key at all, this rule has no file filter.
+  if (!/^files:/m.test(frontmatter)) return undefined;
+
   // Inline JSON array: files: ["**/*.ts", "**/*.tsx"]
   const inlineArrayMatch = frontmatter.match(/^files:\s*\[([^\]]*)\]/m);
   if (inlineArrayMatch) {
-    const patterns = (inlineArrayMatch[1] ?? "")
+    return (inlineArrayMatch[1] ?? "")
       .split(",")
       .map((s) => s.trim().replace(/^["']|["']$/g, ""))
       .filter(Boolean);
-    return patterns.length > 0 ? patterns : undefined;
   }
 
   // YAML block list:
@@ -166,23 +168,23 @@ function parseFrontmatterFiles(frontmatter: string): string[] | undefined {
   //     - pattern2
   const blockListMatch = frontmatter.match(/^files:\s*\r?\n((?:[ \t]+-[ \t]+.+\r?\n?)+)/m);
   if (blockListMatch) {
-    const patterns = (blockListMatch[1] ?? "")
+    return (blockListMatch[1] ?? "")
       .split(/\r?\n/)
       .map((line) => line.trim())
       .filter((line) => line.startsWith("- "))
       .map((line) => line.slice(2).trim().replace(/^["']|["']$/g, ""))
       .filter(Boolean);
-    return patterns.length > 0 ? patterns : undefined;
   }
 
   // Single value: files: "pattern" or files: pattern
   const singleMatch = frontmatter.match(/^files:\s+(.+)$/m);
   if (singleMatch) {
     const val = (singleMatch[1] ?? "").trim().replace(/^["']|["']$/g, "");
-    return val ? [val] : undefined;
+    return val ? [val] : [];
   }
 
-  return undefined;
+  // files: key is present but nothing recognisable follows (e.g. bare `files:` line).
+  return [];
 }
 
 export function _testing_deriveRuleId(rel: string): string {

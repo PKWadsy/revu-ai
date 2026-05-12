@@ -295,37 +295,16 @@ describe("runner — filePatterns filtering", () => {
     expect(report.findings.some((f) => f.ruleId === ".revu/all-rule")).toBe(true);
   });
 
-  it("fails rules with invalid glob patterns in files: frontmatter", async () => {
-    // Write a rule file whose files: frontmatter contains a pattern that
-    // causes micromatch to throw (empty-string pattern).
+  it("fails rules with an empty files: pattern list", async () => {
     writeFileSync(
-      join(filterDir, ".revu", "bad-pattern.revu.md"),
-      "---\nfiles: \"\"\n---\n# Bad pattern rule\n",
+      join(filterDir, ".revu", "empty-files.revu.md"),
+      "---\nfiles: []\n---\n# Empty files list\n",
     );
-    // The empty pattern won't be stored (parseFrontmatter filters it out), so
-    // use a pattern that does get stored but is syntactically invalid for micromatch.
-    // We inject filePatterns directly by writing a rule whose pattern list
-    // includes an empty string — micromatch throws "Expected pattern to be a
-    // non-empty string" when the list actually reaches it.
-    // A simpler approach: write a rule whose content fakes an empty-string entry
-    // by bypassing parseFrontmatter via a separate harness that injects bad patterns.
-    // Instead, test via a rule that reaches the bad-pattern harness with the
-    // patterns already set (simulating internal injection of invalid patterns).
-
-    // Directly test by registering a harness that wraps discovery output so we
-    // can set filePatterns to a known-bad value.
-    // The cleanest integration test: add a rule with a syntactically invalid
-    // bracket expression that micromatch cannot compile.
-    writeFileSync(
-      join(filterDir, ".revu", "invalid-glob.revu.md"),
-      "---\nfiles: \"[invalid\"\n---\n# Invalid glob\n",
-    );
-    registerHarness("mock-filter-bad", makeMockProvider({}));
-
+    registerHarness("mock-filter-empty", makeMockProvider({}));
     try {
       const { report } = await run(filterDir, {
-        pattern: "**/invalid-glob.revu.md",
-        harness: "mock-filter-bad",
+        pattern: "**/empty-files.revu.md",
+        harness: "mock-filter-empty",
         workingTree: false,
         staged: false,
         output: "json",
@@ -333,16 +312,12 @@ describe("runner — filePatterns filtering", () => {
         force: false,
         timeoutMs: 60_000,
       });
-
-      const badRule = report.rules.find((r) => r.id === ".revu/invalid-glob");
-      // micromatch silently returns [] for [invalid rather than throwing, so the
-      // rule is either skipped (no match) or run; it must not be ok:true with a finding.
-      // The important guarantee: the rule never runs the agent for this changed file set
-      // and produces no spurious findings.
-      expect(badRule).toBeDefined();
-      expect(report.findings.some((f) => f.ruleId === ".revu/invalid-glob")).toBe(false);
+      const rule = report.rules.find((r) => r.id === ".revu/empty-files");
+      expect(rule?.ok).toBe(false);
+      expect(rule?.errorMessage).toMatch(/empty/i);
+      expect(rule?.skipped).toBeUndefined();
     } finally {
-      unregisterHarness("mock-filter-bad");
+      unregisterHarness("mock-filter-empty");
     }
   });
 });
