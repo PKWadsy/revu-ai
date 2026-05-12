@@ -5,6 +5,7 @@ import { startSidecar } from "./mcp/server.js";
 import { getHarnessFactory } from "./providers/registry.js";
 import { createLimiter } from "./concurrency.js";
 import { SEVERITY_ORDER } from "./types.js";
+import micromatch from "micromatch";
 import type {
   Finding,
   RevuConfig,
@@ -100,6 +101,61 @@ export async function run(cwd: string, config: RevuConfig, hooks: RunHooks = {},
           const priorForRule = priorByRule.get(rule.ruleId);
           const ruleStart = Date.now();
 
+          // If the rule declares a files: pattern list, decide whether to run, skip,
+          // or fail before spawning an agent.
+          //   • filePatterns === undefined  → no key in frontmatter → run against all files
+          //   • filePatterns is empty []    → key was present but empty (broken config) → fail
+          //   • micromatch throws           → invalid pattern syntax → fail
+          //   • no changed files match      → skip (nothing to review)
+          if (rule.filePatterns !== undefined) {
+            if (rule.filePatterns.length === 0) {
+              const failed: RuleResult = {
+                id: rule.ruleId,
+                path: rule.relPath,
+                ok: false,
+                durationMs: Date.now() - ruleStart,
+                findingCount: 0,
+                errorMessage:
+                  "files: pattern list is empty — add at least one glob pattern or remove the key",
+              };
+              ruleResults.push(failed);
+              hooks.onRuleEnd?.(failed);
+              return;
+            }
+
+            let matchingFiles: string[];
+            try {
+              matchingFiles = micromatch(resolved.changedFiles, rule.filePatterns);
+            } catch (e) {
+              const msg = (e as Error)?.message ?? String(e);
+              const failed: RuleResult = {
+                id: rule.ruleId,
+                path: rule.relPath,
+                ok: false,
+                durationMs: Date.now() - ruleStart,
+                findingCount: 0,
+                errorMessage: `invalid files: pattern — ${msg}`,
+              };
+              ruleResults.push(failed);
+              hooks.onRuleEnd?.(failed);
+              return;
+            }
+
+            if (matchingFiles.length === 0) {
+              const skipped: RuleResult = {
+                id: rule.ruleId,
+                path: rule.relPath,
+                ok: true,
+                durationMs: 0,
+                findingCount: 0,
+                skipped: true,
+              };
+              ruleResults.push(skipped);
+              hooks.onRuleEnd?.(skipped);
+              return;
+            }
+          }
+
           // Per-rule isolation: a provider that throws (bug, runtime
           // error, anything we didn't anticipate) must not abort the
           // whole run. Catch here, convert to an errored RuleResult, and
@@ -121,6 +177,7 @@ export async function run(cwd: string, config: RevuConfig, hooks: RunHooks = {},
                 : {}),
               ...(priorForRule && priorForRule.length > 0 ? { priorFindings: priorForRule } : {}),
               ...(priorHeadSha ? { priorHeadSha } : {}),
+              ...(rule.filePatterns ? { filePatterns: rule.filePatterns } : {}),
             });
             ruleResult = {
               id: result.ruleId,

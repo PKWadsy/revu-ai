@@ -8,3 +8,4 @@ coverage/
 demo-repo/
 .claude/
 future-work.md
+package-lock.json

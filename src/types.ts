@@ -13,6 +13,22 @@ export interface RuleFile {
   absPath: string;
   relPath: string;
   content: string;
+  /** Glob patterns (repo-root-relative) specifying which changed files this rule applies to.
+   *  Parsed from the YAML frontmatter `files:` field. When absent, the rule applies to all changed files. */
+  filePatterns?: string[];
+}
+
+export interface RuleResult {
+  id: string;
+  path: string;
+  ok: boolean;
+  durationMs: number;
+  findingCount: number;
+  errorMessage?: string;
+  /** True if this rule was stopped by the per-rule timeout. */
+  timedOut?: boolean;
+  /** True if this rule was skipped because no changed files matched its `files:` patterns. */
+  skipped?: boolean;
 }
 
 export type ReviewTarget =
@@ -56,17 +72,6 @@ export interface Resolution {
   reason: "fixed" | "stale";
   /** Commit at which the agent considered the finding resolved. */
   resolvedAtSha: string;
-}
-
-export interface RuleResult {
-  id: string;
-  path: string;
-  ok: boolean;
-  durationMs: number;
-  findingCount: number;
-  errorMessage?: string;
-  /** True if this rule was stopped by the per-rule timeout. */
-  timedOut?: boolean;
 }
 
 export interface RunReport {

@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { discoverRules } from "../src/discovery.js";
+import { discoverRules, parseFrontmatter } from "../src/discovery.js";
 
 let dir: string;
 
@@ -144,5 +144,111 @@ describe("discoverRules — non-git fallback", () => {
     expect(rules.some((r) => r.relPath.includes("node_modules"))).toBe(false);
     expect(rules.some((r) => r.relPath.startsWith("dist/"))).toBe(false);
     expect(rules.some((r) => r.relPath.endsWith("ok.revu.md"))).toBe(true);
+  });
+});
+
+describe("parseFrontmatter", () => {
+  it("returns content unchanged when there is no frontmatter", () => {
+    const raw = "# My rule\n\nSome content.\n";
+    const { content, filePatterns } = parseFrontmatter(raw);
+    expect(content).toBe(raw);
+    expect(filePatterns).toBeUndefined();
+  });
+
+  it("strips frontmatter and returns the body", () => {
+    const raw = '---\nfiles: "**/*.ts"\n---\n# My rule\n\nContent.\n';
+    const { content, filePatterns } = parseFrontmatter(raw);
+    expect(content).toBe("# My rule\n\nContent.\n");
+    expect(filePatterns).toEqual(["**/*.ts"]);
+  });
+
+  it("parses a single unquoted files: value", () => {
+    const raw = "---\nfiles: **/*.py\n---\n# Rule\n";
+    const { filePatterns } = parseFrontmatter(raw);
+    expect(filePatterns).toEqual(["**/*.py"]);
+  });
+
+  it("parses an inline JSON array for files:", () => {
+    const raw = '---\nfiles: ["**/*.ts", "**/*.tsx"]\n---\n# Rule\n';
+    const { filePatterns } = parseFrontmatter(raw);
+    expect(filePatterns).toEqual(["**/*.ts", "**/*.tsx"]);
+  });
+
+  it("parses a YAML block list for files:", () => {
+    const raw = "---\nfiles:\n  - src/**/*.ts\n  - tests/**/*.ts\n---\n# Rule\n";
+    const { filePatterns } = parseFrontmatter(raw);
+    expect(filePatterns).toEqual(["src/**/*.ts", "tests/**/*.ts"]);
+  });
+
+  it("returns undefined filePatterns when files: is absent from frontmatter", () => {
+    const raw = "---\ntitle: My rule\n---\n# Rule\n";
+    const { filePatterns } = parseFrontmatter(raw);
+    expect(filePatterns).toBeUndefined();
+  });
+
+  it("returns empty array when files: key is present but has an empty array value", () => {
+    const raw = "---\nfiles: []\n---\n# Rule\n";
+    const { filePatterns } = parseFrontmatter(raw);
+    expect(filePatterns).toEqual([]);
+  });
+
+  it("returns empty array when files: key is present but has an empty string value", () => {
+    const raw = '---\nfiles: ""\n---\n# Rule\n';
+    const { filePatterns } = parseFrontmatter(raw);
+    expect(filePatterns).toEqual([]);
+  });
+
+  it("returns empty array when files: key is present but bare (no value)", () => {
+    const raw = "---\nfiles:\n---\n# Rule\n";
+    const { filePatterns } = parseFrontmatter(raw);
+    expect(filePatterns).toEqual([]);
+  });
+
+  it("ignores frontmatter that does not start at the very beginning", () => {
+    const raw = "\n---\nfiles: **/*.ts\n---\n# Rule\n";
+    const { content, filePatterns } = parseFrontmatter(raw);
+    expect(content).toBe(raw);
+    expect(filePatterns).toBeUndefined();
+  });
+});
+
+describe("discoverRules — filePatterns from frontmatter", () => {
+  let fmDir: string;
+
+  beforeAll(() => {
+    fmDir = mkdtempSync(join(tmpdir(), "revu-discovery-fm-"));
+    execFileSync("git", ["init", "-q"], { cwd: fmDir });
+    mkdirSync(join(fmDir, ".revu"), { recursive: true });
+
+    // Rule with files: frontmatter
+    writeFileSync(
+      join(fmDir, ".revu", "ts-only.revu.md"),
+      '---\nfiles: "**/*.ts"\n---\n# TS rule\n',
+    );
+    // Rule without frontmatter
+    writeFileSync(join(fmDir, ".revu", "all-files.revu.md"), "# All files rule\n");
+  });
+
+  afterAll(() => {
+    rmSync(fmDir, { recursive: true, force: true });
+  });
+
+  it("populates filePatterns for rules with files: frontmatter", async () => {
+    const rules = await discoverRules(fmDir, "**/*.revu.md");
+    const tsRule = rules.find((r) => r.ruleId === ".revu/ts-only");
+    expect(tsRule?.filePatterns).toEqual(["**/*.ts"]);
+  });
+
+  it("omits filePatterns for rules without files: frontmatter", async () => {
+    const rules = await discoverRules(fmDir, "**/*.revu.md");
+    const allRule = rules.find((r) => r.ruleId === ".revu/all-files");
+    expect(allRule?.filePatterns).toBeUndefined();
+  });
+
+  it("strips frontmatter from content", async () => {
+    const rules = await discoverRules(fmDir, "**/*.revu.md");
+    const tsRule = rules.find((r) => r.ruleId === ".revu/ts-only");
+    expect(tsRule?.content).toBe("# TS rule\n");
+    expect(tsRule?.content).not.toContain("---");
   });
 });
