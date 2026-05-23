@@ -2,6 +2,13 @@
 
 All notable changes to `revu-ai` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project's pre-1.0 versioning treats minor bumps as breaking-change boundaries.
 
+## 0.2.2 — 2026-05-23
+
+### Added
+
+- **YAML frontmatter `files:` filter on `*.revu.md` rules.** Rules can scope themselves to a glob (or list of globs) via frontmatter; only changed files matching the glob are sent to the agent for that rule. Empty `files:` is fail-closed (the rule is skipped with a clear error) rather than silently running against the whole repo.
+- **Diagnostic warning when an agent emits prose but reports 0 findings.** Both harnesses now track per-rule assistant prose length and `mcp__revu__report_finding` call counts; the pretty output flags any rule that produced >200 chars of prose without calling the tool. Catches the "model wrote findings as text instead of using the tool" failure mode observed with opencode + Grok.
+
 ## 0.2.1 — 2026-05-09
 
 ### Fixed
