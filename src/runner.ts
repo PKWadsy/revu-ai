@@ -187,6 +187,7 @@ export async function run(cwd: string, config: RevuConfig, hooks: RunHooks = {},
               findingCount: sidecar.aggregator.countFor(result.ruleId),
               ...(result.errorMessage ? { errorMessage: result.errorMessage } : {}),
               ...(result.timedOut ? { timedOut: true } : {}),
+              ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}),
             };
           } catch (e) {
             const message = (e as Error)?.stack ?? (e as Error)?.message ?? String(e);

@@ -10,6 +10,7 @@ import type {
   ReviewActivity,
   ReviewAgent,
   ReviewAgentFactory,
+  ReviewDiagnostics,
   ReviewInput,
   ReviewResult,
   ScaffoldAgentFactory,
@@ -107,6 +108,7 @@ export const claudeCodeProvider: ReviewAgentFactory = (cfg) => ({
       // The agent SDK throws on non-zero subprocess exit AFTER emitting `result`,
       // so we capture the result-derived error first and prefer it in the catch.
       let resultErrorMessage: string | undefined;
+      const diagnostics: ReviewDiagnostics = { textChars: 0, findingToolCalls: 0 };
 
       try {
         for await (const msg of q) {
@@ -134,8 +136,9 @@ export const claudeCodeProvider: ReviewAgentFactory = (cfg) => ({
               process.stderr.write(`[${input.ruleId}] msg.type=${m.type}\n`);
             }
           }
-          if (m.type === "assistant" && input.onActivity) {
-            emitAssistantActivity(m.message?.content, input.onActivity);
+          if (m.type === "assistant") {
+            accumulateAssistantDiagnostics(m.message?.content, diagnostics);
+            if (input.onActivity) emitAssistantActivity(m.message?.content, input.onActivity);
           }
           if (m.type === "result" && (m.is_error || m.subtype !== "success")) {
             const text = m.result ?? m.errors?.join("; ") ?? "unknown error";
@@ -168,9 +171,10 @@ export const claudeCodeProvider: ReviewAgentFactory = (cfg) => ({
           ok: false,
           durationMs: Date.now() - start,
           errorMessage: resultErrorMessage,
+          diagnostics,
         };
       }
-      return { ruleId: input.ruleId, ok: true, durationMs: Date.now() - start };
+      return { ruleId: input.ruleId, ok: true, durationMs: Date.now() - start, diagnostics };
     } catch (e) {
       if (timedOut) {
         return {
@@ -354,6 +358,25 @@ export function isReadOnlyShellCommand(command: string): boolean {
 
 function truncate(s: string, n: number): string {
   return s.length > n ? `${s.slice(0, n)}…` : s;
+}
+
+/** Walk the assistant content blocks once per stream message and accumulate
+ *  the diagnostics the runner uses to detect "model talked but didn't tool-
+ *  call". Cheap enough to run unconditionally; the Agent SDK does not stream
+ *  text incrementally for a single message, so each block's `text` is the
+ *  final value and we count it exactly once. */
+export function accumulateAssistantDiagnostics(
+  content: unknown,
+  diagnostics: ReviewDiagnostics,
+): void {
+  if (!Array.isArray(content)) return;
+  for (const block of content as Array<{ type?: string; name?: string; text?: string }>) {
+    if (block.type === "tool_use" && block.name === "mcp__revu__report_finding") {
+      diagnostics.findingToolCalls += 1;
+    } else if (block.type === "text" && typeof block.text === "string") {
+      diagnostics.textChars += block.text.trim().length;
+    }
+  }
 }
 
 function emitAssistantActivity(content: unknown, onActivity: (a: ReviewActivity) => void): void {

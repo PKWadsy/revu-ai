@@ -36,6 +36,7 @@ import { startSidecar } from "../mcp/server.js";
 import type {
   ReviewActivity,
   ReviewAgentFactory,
+  ReviewDiagnostics,
   ReviewInput,
   ReviewResult,
   ScaffoldAgentFactory,
@@ -236,7 +237,8 @@ export const opencodeProvider: ReviewAgentFactory = (cfg: OpencodeConfig) => ({
         return errorResult(input.ruleId, start, "opencode: failed to create session");
       }
 
-      const eventLoop = startEventLoop(client, sessionId, input, abort.signal, armStuckTimer);
+      const diagnostics: ReviewDiagnostics = { textChars: 0, findingToolCalls: 0 };
+      const eventLoop = startEventLoop(client, sessionId, input, abort.signal, armStuckTimer, diagnostics);
 
       const promptResp = await client.session.prompt({
         path: { id: sessionId },
@@ -284,7 +286,7 @@ export const opencodeProvider: ReviewAgentFactory = (cfg: OpencodeConfig) => ({
         return errorResult(input.ruleId, start, formatOpencodeError(info.error));
       }
       void server;
-      return { ruleId: input.ruleId, ok: true, durationMs: Date.now() - start };
+      return { ruleId: input.ruleId, ok: true, durationMs: Date.now() - start, diagnostics };
     } catch (e) {
       if (timedOut) return timeoutResult(input.ruleId, start, input.timeoutMs);
       if (stuck) return errorResult(input.ruleId, start, `stuck — no activity for ${STUCK_TIMEOUT_MS / 1000}s`);
@@ -503,18 +505,24 @@ function startEventLoop(
   sessionId: string,
   input: ReviewInput,
   signal: AbortSignal,
-  onAnyEvent?: () => void,
+  onAnyEvent: (() => void) | undefined,
+  diagnostics: ReviewDiagnostics,
 ): EventLoopHandle {
   const onActivity = input.onActivity;
-  if (!onActivity && !onAnyEvent) return { stop: () => {} };
   let stopped = false;
 
   // opencode emits `message.part.updated` for every chunk of a tool's input
   // as it streams in (e.g. you'll see Glob({}) → Glob(**/*.[jt]s) for the
   // same callID). Track which callIDs we've already announced to keep the
   // progress UI clean — emit on the first sighting that has a non-empty
-  // input, ignore later updates for the same callID.
+  // input, ignore later updates for the same callID. The same callID set
+  // gates diagnostic counter increments so we don't count the same tool
+  // call multiple times as opencode streams its input.
   const announcedTools = new Set<string>();
+  // Text parts get updated incrementally too — track the last observed length
+  // per partID so we accumulate only the delta, not the whole accreted prose
+  // every event.
+  const textLengths = new Map<string, number>();
 
   void (async () => {
     try {
@@ -522,7 +530,7 @@ function startEventLoop(
       for await (const ev of sub.stream as AsyncIterable<Event>) {
         if (stopped) break;
         onAnyEvent?.();
-        if (onActivity) emitActivityFromEvent(ev, sessionId, onActivity, announcedTools);
+        processEvent(ev, sessionId, onActivity, announcedTools, textLengths, diagnostics);
       }
     } catch {
       /* event stream errors are non-fatal — they're cosmetic progress */
@@ -546,13 +554,17 @@ function startScaffoldEventLoop(
   const onActivity = input.onActivity;
   let stopped = false;
   const announcedTools = new Set<string>();
+  const textLengths = new Map<string, number>();
+  // Scaffold path never uses diagnostics — it's a throw-away counter to keep
+  // processEvent's signature uniform with the review path.
+  const scratchDiagnostics: ReviewDiagnostics = { textChars: 0, findingToolCalls: 0 };
 
   void (async () => {
     try {
       const sub = await client.event.subscribe({ signal });
       for await (const ev of sub.stream as AsyncIterable<Event>) {
         if (stopped) break;
-        emitActivityFromEvent(ev, sessionId, onActivity, announcedTools);
+        processEvent(ev, sessionId, onActivity, announcedTools, textLengths, scratchDiagnostics);
       }
     } catch {
       /* same robustness as review path */
@@ -566,11 +578,17 @@ function startScaffoldEventLoop(
   };
 }
 
-function emitActivityFromEvent(
+/** Process one streamed event: update diagnostic counters AND, if the caller
+ *  registered an onActivity hook, emit the progress-UI activity. The counter
+ *  updates always run — they're how the runner detects "agent emitted prose
+ *  but never tool-called the MCP". */
+function processEvent(
   ev: Event,
   sessionId: string,
-  onActivity: (a: ReviewActivity) => void,
+  onActivity: ((a: ReviewActivity) => void) | undefined,
   announcedTools: Set<string>,
+  textLengths: Map<string, number>,
+  diagnostics: ReviewDiagnostics,
 ): void {
   if (ev.type !== "message.part.updated") return;
   const part = ev.properties.part;
@@ -590,10 +608,23 @@ function emitActivityFromEvent(
     }
     announcedTools.add(part.callID);
     const name = mapOpencodeToolName(part.tool);
-    onActivity({ kind: "tool", name, detail: summarizeOpencodeToolPart(part) });
+    if (name === "mcp__revu__report_finding") diagnostics.findingToolCalls += 1;
+    onActivity?.({ kind: "tool", name, detail: summarizeOpencodeToolPart(part) });
   } else if (part.type === "text") {
-    const trimmed = part.text.trim();
-    if (trimmed) onActivity({ kind: "text", detail: truncate(trimmed.replace(/\s+/g, " "), 120) });
+    // opencode emits `message.part.updated` with the accreted full text every
+    // chunk — compute the delta against what we last saw for this partID so we
+    // count each character exactly once.
+    const partId = (part as { id?: string }).id ?? part.text;
+    const seen = textLengths.get(partId) ?? 0;
+    const trimmedFull = part.text.trim();
+    const fullLen = trimmedFull.length;
+    if (fullLen > seen) {
+      diagnostics.textChars += fullLen - seen;
+      textLengths.set(partId, fullLen);
+    }
+    if (onActivity && trimmedFull) {
+      onActivity({ kind: "text", detail: truncate(trimmedFull.replace(/\s+/g, " "), 120) });
+    }
   }
 }
 

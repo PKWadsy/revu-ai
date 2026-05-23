@@ -29,6 +29,15 @@ export interface RuleResult {
   timedOut?: boolean;
   /** True if this rule was skipped because no changed files matched its `files:` patterns. */
   skipped?: boolean;
+  /** Observability counters from the provider — text chars emitted and
+   *  report_finding tool calls observed. The pretty output surfaces a warning
+   *  when textChars is high but findingCount is 0 (model wrote findings as
+   *  prose instead of calling the MCP tool). Absent for skipped rules and for
+   *  providers that don't report them. */
+  diagnostics?: {
+    textChars: number;
+    findingToolCalls: number;
+  };
 }
 
 export type ReviewTarget =
