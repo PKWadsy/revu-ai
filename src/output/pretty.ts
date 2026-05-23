@@ -1,5 +1,12 @@
 import type { RunReport, Severity } from "../types.js";
 
+/** Minimum text-output volume (characters of trimmed assistant prose) at which
+ *  a rule that produced zero findings starts to look like "model talked but
+ *  didn't call the MCP tool" rather than "model genuinely found nothing".
+ *  Set generously — Claude routinely emits ~100 chars of preamble even when
+ *  silent is correct; we only want to flag clearly substantive prose. */
+export const SILENCED_TEXT_THRESHOLD = 200;
+
 const COLOR_ENABLED = process.stdout.isTTY && !process.env.NO_COLOR;
 
 const c = {
@@ -64,6 +71,17 @@ export function emitPretty(report: RunReport): void {
     lines.push("");
   }
 
+  const silenced = detectPossiblySilencedRules(report);
+  if (silenced.length > 0) {
+    lines.push(paint("yellow", `⚠ ${silenced.length} rule(s) emitted substantial text but reported 0 findings —`));
+    lines.push(paint("yellow", "  the model may have described findings as prose instead of calling \`mcp__revu__report_finding\`."));
+    lines.push(paint("yellow", "  Re-run with REVU_DEBUG=1 to inspect agent output, or try a different model."));
+    for (const r of silenced) {
+      lines.push(paint("dim", `    ${r.id}  (${r.textChars} chars of agent text, 0 findings)`));
+    }
+    lines.push("");
+  }
+
   if (report.findings.length === 0) {
     lines.push(paint("green", "  no findings"));
   } else {
@@ -101,6 +119,26 @@ export function emitPretty(report: RunReport): void {
   }
 
   process.stdout.write(lines.join("\n") + "\n");
+}
+
+/** Rules where the agent emitted substantial assistant prose but reported no
+ *  findings — symptomatic of a model that wrote its findings as text instead
+ *  of calling the MCP tool. Excludes errored, timed-out, and skipped rules
+ *  (those have their own banners and the text-loss story doesn't apply). */
+export function detectPossiblySilencedRules(
+  report: RunReport,
+): Array<{ id: string; textChars: number }> {
+  return report.rules
+    .filter(
+      (r) =>
+        r.ok &&
+        !r.timedOut &&
+        !r.skipped &&
+        r.findingCount === 0 &&
+        r.diagnostics !== undefined &&
+        r.diagnostics.textChars >= SILENCED_TEXT_THRESHOLD,
+    )
+    .map((r) => ({ id: r.id, textChars: r.diagnostics!.textChars }));
 }
 
 function detectSystemicFailure(report: RunReport): { scope: string; message: string } | undefined {

@@ -31,6 +31,17 @@ export interface ReviewInput {
   filePatterns?: string[];
 }
 
+export interface ReviewDiagnostics {
+  /** Total characters of assistant text output observed in this run, after
+   *  trimming. High values when findingCount is 0 suggest the model wrote
+   *  findings as prose instead of calling `mcp__revu__report_finding`. */
+  textChars: number;
+  /** Count of `mcp__revu__report_finding` tool calls observed on the agent's
+   *  event/message stream. Compare against the sidecar's recorded finding
+   *  count to spot calls that failed at the MCP layer. */
+  findingToolCalls: number;
+}
+
 export interface ReviewResult {
   ruleId: string;
   ok: boolean;
@@ -38,6 +49,9 @@ export interface ReviewResult {
   errorMessage?: string;
   /** True when the agent was stopped by the per-rule timeout. */
   timedOut?: boolean;
+  /** Observability counters the runner uses to detect "model talked but didn't
+   *  tool-call" — see {@link ReviewDiagnostics}. */
+  diagnostics?: ReviewDiagnostics;
 }
 
 export interface ReviewAgent {

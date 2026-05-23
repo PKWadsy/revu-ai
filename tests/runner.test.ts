@@ -109,6 +109,42 @@ describe("runner", () => {
     expect(exitCode).toBe(1);
   });
 
+  it("propagates provider diagnostics onto the RuleResult", async () => {
+    // A provider that doesn't talk to the MCP sidecar at all (0 findings) but
+    // reports diagnostics indicating it emitted ~600 chars of assistant text —
+    // the signal the warning surface uses to flag "model talked but didn't
+    // tool-call".
+    const diagnosticProvider: ReviewAgentFactory = (): ReviewAgent => ({
+      name: "mock-diag",
+      async run(input: ReviewInput) {
+        return {
+          ruleId: input.ruleId,
+          ok: true,
+          durationMs: 1,
+          diagnostics: { textChars: 600, findingToolCalls: 0 },
+        };
+      },
+    });
+    registerHarness("mock-diag", diagnosticProvider);
+    try {
+      const { report } = await run(dir, {
+        pattern: "**/*.revu.md",
+        harness: "mock-diag",
+        workingTree: false,
+        staged: false,
+        output: "json",
+        failOn: "critical",
+        force: false,
+        timeoutMs: 60_000,
+      });
+      const alpha = report.rules.find((r) => r.id === ".revu/alpha");
+      expect(alpha?.diagnostics).toEqual({ textChars: 600, findingToolCalls: 0 });
+      expect(alpha?.findingCount).toBe(0);
+    } finally {
+      unregisterHarness("mock-diag");
+    }
+  });
+
   it("returns exit code 0 when failOn threshold is not crossed", async () => {
     const { exitCode } = await run(dir, {
       pattern: "**/*.revu.md",
