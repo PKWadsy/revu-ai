@@ -5,7 +5,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { isAbsolute, relative, dirname } from "node:path";
 import { mkdir, writeFile } from "node:fs/promises";
 import type { AddressInfo } from "node:net";
-import type { Finding } from "../types.js";
+import type { Check, Finding, ReviewSummary } from "../types.js";
 import { ensureFingerprint } from "../findings.js";
 import { FindingsAggregator } from "./aggregator.js";
 import { isAllowedRuleFileWrite, toRepoRelative } from "../scaffold-paths.js";
@@ -14,10 +14,16 @@ import {
   REPORT_FINDING_DESCRIPTION,
   MarkResolvedShape,
   MARK_RESOLVED_DESCRIPTION,
+  ReportReviewSummaryShape,
+  REPORT_REVIEW_SUMMARY_DESCRIPTION,
+  ReportCheckShape,
+  REPORT_CHECK_DESCRIPTION,
   WriteRuleFileShape,
   WRITE_RULE_FILE_DESCRIPTION,
   type ReportFindingInput,
   type MarkResolvedInput,
+  type ReportReviewSummaryInput,
+  type ReportCheckInput,
   type WriteRuleFileInput,
 } from "./tools.js";
 
@@ -181,6 +187,75 @@ function buildMcpServer(ruleId: string, ctx: HandlerCtx): McpServer {
           {
             type: "text",
             text: `Recorded resolution for ${args.fingerprint} (${args.reason ?? "fixed"}).`,
+          },
+        ],
+      };
+    },
+  );
+
+  server.registerTool(
+    "report_check",
+    {
+      description: REPORT_CHECK_DESCRIPTION,
+      inputSchema: ReportCheckShape,
+    },
+    async (args: ReportCheckInput) => {
+      if (args.lineEnd !== undefined && args.line === undefined) {
+        return errorResult("`line` is required when `lineEnd` is set.");
+      }
+      if (args.lineEnd !== undefined && args.line !== undefined && args.lineEnd < args.line) {
+        return errorResult("`lineEnd` must be >= `line`.");
+      }
+      const check: Check = {
+        ruleId,
+        path: normalizePath(args.path, ctx.repoRoot),
+        message: args.message,
+        ...(args.line !== undefined ? { line: args.line } : {}),
+        ...(args.lineEnd !== undefined ? { lineEnd: args.lineEnd } : {}),
+        ...(args.category !== undefined ? { category: args.category } : {}),
+      };
+      const accepted = ctx.aggregator.addCheck(check);
+      return {
+        content: [
+          {
+            type: "text",
+            text: accepted
+              ? `Recorded check for ${check.path}.`
+              : `Duplicate check for ${check.path}; ignored.`,
+          },
+        ],
+      };
+    },
+  );
+
+  server.registerTool(
+    "report_review_summary",
+    {
+      description: REPORT_REVIEW_SUMMARY_DESCRIPTION,
+      inputSchema: ReportReviewSummaryShape,
+    },
+    async (args: ReportReviewSummaryInput) => {
+      const summary: ReviewSummary = {
+        ruleId,
+        outcome: args.outcome,
+        checked: args.checked,
+        rationale: args.rationale,
+      };
+      const accepted = ctx.aggregator.addSummary(summary);
+      const findingCount = ctx.aggregator.countFor(ruleId);
+      const mismatch =
+        (args.outcome === "pass" && findingCount > 0) ||
+        (args.outcome === "concerns" && findingCount === 0);
+      const mismatchNote = mismatch
+        ? ` (note: outcome="${args.outcome}" but ${findingCount} finding(s) reported — check your interpretation)`
+        : "";
+      return {
+        content: [
+          {
+            type: "text",
+            text: accepted
+              ? `Recorded review summary (${args.outcome}).${mismatchNote}`
+              : `Duplicate review summary for this rule; ignored. report_review_summary should be called exactly once per run.`,
           },
         ],
       };

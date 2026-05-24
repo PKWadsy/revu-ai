@@ -7,10 +7,12 @@ import { createLimiter } from "./concurrency.js";
 import { SEVERITY_ORDER } from "./types.js";
 import micromatch from "micromatch";
 import type {
+  Check,
   Finding,
   RevuConfig,
   RunReport,
   RuleResult,
+  ReviewSummary,
   Severity,
 } from "./types.js";
 import type { ReviewActivity } from "./providers/types.js";
@@ -34,6 +36,10 @@ export interface RunHooks {
   onActivity?: (ruleId: string, activity: ReviewActivity) => void;
   /** Fires for each finding the moment it's reported through the MCP sidecar. */
   onFinding?: (finding: Finding) => void;
+  /** Fires when a rule's review summary lands on the MCP sidecar. */
+  onSummary?: (summary: ReviewSummary) => void;
+  /** Fires for each `report_check` call — incremental compliance evidence. */
+  onCheck?: (check: Check) => void;
 }
 
 export interface RunInputs {
@@ -82,6 +88,12 @@ export async function run(cwd: string, config: RevuConfig, hooks: RunHooks = {},
   const unsubscribeFindings = hooks.onFinding
     ? sidecar.aggregator.onAdd(hooks.onFinding)
     : () => {};
+  const unsubscribeSummaries = hooks.onSummary
+    ? sidecar.aggregator.onSummary(hooks.onSummary)
+    : () => {};
+  const unsubscribeChecks = hooks.onCheck
+    ? sidecar.aggregator.onCheck(hooks.onCheck)
+    : () => {};
   const factory = getHarnessFactory(config.harness);
   const provider = factory({
     ...(config.model ? { model: config.model } : {}),
@@ -115,6 +127,8 @@ export async function run(cwd: string, config: RevuConfig, hooks: RunHooks = {},
                 ok: false,
                 durationMs: Date.now() - ruleStart,
                 findingCount: 0,
+                summaryCount: 0,
+                checkCount: 0,
                 errorMessage:
                   "files: pattern list is empty — add at least one glob pattern or remove the key",
               };
@@ -134,6 +148,8 @@ export async function run(cwd: string, config: RevuConfig, hooks: RunHooks = {},
                 ok: false,
                 durationMs: Date.now() - ruleStart,
                 findingCount: 0,
+                summaryCount: 0,
+                checkCount: 0,
                 errorMessage: `invalid files: pattern — ${msg}`,
               };
               ruleResults.push(failed);
@@ -148,6 +164,8 @@ export async function run(cwd: string, config: RevuConfig, hooks: RunHooks = {},
                 ok: true,
                 durationMs: 0,
                 findingCount: 0,
+                summaryCount: 0,
+                checkCount: 0,
                 skipped: true,
               };
               ruleResults.push(skipped);
@@ -185,6 +203,8 @@ export async function run(cwd: string, config: RevuConfig, hooks: RunHooks = {},
               ok: result.ok,
               durationMs: result.durationMs,
               findingCount: sidecar.aggregator.countFor(result.ruleId),
+              summaryCount: sidecar.aggregator.summaryCountFor(result.ruleId),
+              checkCount: sidecar.aggregator.checkCountFor(result.ruleId),
               ...(result.errorMessage ? { errorMessage: result.errorMessage } : {}),
               ...(result.timedOut ? { timedOut: true } : {}),
               ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}),
@@ -197,6 +217,8 @@ export async function run(cwd: string, config: RevuConfig, hooks: RunHooks = {},
               ok: false,
               durationMs: Date.now() - ruleStart,
               findingCount: sidecar.aggregator.countFor(rule.ruleId),
+              summaryCount: sidecar.aggregator.summaryCountFor(rule.ruleId),
+              checkCount: sidecar.aggregator.checkCountFor(rule.ruleId),
               errorMessage: `unexpected error: ${message.split("\n")[0]}`,
             };
           }
@@ -207,14 +229,20 @@ export async function run(cwd: string, config: RevuConfig, hooks: RunHooks = {},
     );
   } finally {
     unsubscribeFindings();
+    unsubscribeSummaries();
+    unsubscribeChecks();
     await sidecar.shutdown();
   }
 
   const findings: Finding[] = sidecar.aggregator.all();
   const resolutions = sidecar.aggregator.allResolutions();
+  const summaries = sidecar.aggregator
+    .allSummaries()
+    .sort((a, b) => a.ruleId.localeCompare(b.ruleId));
+  const checks = sidecar.aggregator.allChecks().sort(checkSort);
 
   const report: RunReport = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     runId,
     startedAt,
     completedAt: new Date().toISOString(),
@@ -222,6 +250,8 @@ export async function run(cwd: string, config: RevuConfig, hooks: RunHooks = {},
     rules: ruleResults.sort((a, b) => a.id.localeCompare(b.id)),
     findings: findings.sort(findingSort),
     resolutions,
+    summaries,
+    checks,
   };
 
   const exitCode = computeExitCode(findings, ruleResults, config.failOn);
@@ -238,6 +268,12 @@ function computeExitCode(findings: Finding[], rules: RuleResult[], failOn: Sever
 function findingSort(a: Finding, b: Finding): number {
   const sevDiff = SEVERITY_ORDER[b.severity] - SEVERITY_ORDER[a.severity];
   if (sevDiff !== 0) return sevDiff;
+  if (a.path !== b.path) return a.path.localeCompare(b.path);
+  return (a.line ?? 0) - (b.line ?? 0);
+}
+
+function checkSort(a: Check, b: Check): number {
+  if (a.ruleId !== b.ruleId) return a.ruleId.localeCompare(b.ruleId);
   if (a.path !== b.path) return a.path.localeCompare(b.path);
   return (a.line ?? 0) - (b.line ?? 0);
 }

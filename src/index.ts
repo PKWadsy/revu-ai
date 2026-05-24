@@ -23,4 +23,7 @@ export type {
   RuleResult,
   RunReport,
   RevuConfig,
+  Resolution,
+  ReviewSummary,
+  Check,
 } from "./types.js";

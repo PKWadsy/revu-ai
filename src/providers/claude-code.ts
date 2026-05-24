@@ -24,6 +24,8 @@ const ALWAYS_ALLOWED_TOOLS = [
   "Glob",
   "mcp__revu__report_finding",
   "mcp__revu__mark_finding_resolved",
+  "mcp__revu__report_review_summary",
+  "mcp__revu__report_check",
 ];
 
 const RESTRICTED_TOOLSET = ["Read", "Grep", "Glob", "Bash"];

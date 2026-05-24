@@ -82,6 +82,55 @@ export function emitPretty(report: RunReport): void {
     lines.push("");
   }
 
+  const incomplete = detectIncompleteReviews(report);
+  if (incomplete.length > 0) {
+    lines.push(paint("yellow", `⚠ ${incomplete.length} rule(s) did not call \`mcp__revu__report_review_summary\` — likely incomplete review.`));
+    lines.push(paint("yellow", "  Healthy runs end with one summary call per rule. A missing summary means the agent"));
+    lines.push(paint("yellow", "  silently exited or never reached the MCP — treat the absence of findings with caution."));
+    for (const r of incomplete) {
+      lines.push(paint("dim", `    ${r.id}  (no review summary)`));
+    }
+    lines.push("");
+  }
+
+  // Render compliance evidence + per-rule summaries, grouped by rule. These
+  // show what the agents verified — the "show your work" surface that gives
+  // a clean run more credibility than just a green tick.
+  const ruleIds = Array.from(
+    new Set([
+      ...(report.summaries ?? []).map((s) => s.ruleId),
+      ...(report.checks ?? []).map((c) => c.ruleId),
+    ]),
+  ).sort();
+  if (ruleIds.length > 0) {
+    lines.push(paint("bold", "verified"));
+    for (const ruleId of ruleIds) {
+      const summary = (report.summaries ?? []).find((s) => s.ruleId === ruleId);
+      const checks = (report.checks ?? []).filter((c) => c.ruleId === ruleId);
+      const tickColor: keyof typeof c = summary?.outcome === "concerns" ? "yellow" : "green";
+      const outcomeTag = summary
+        ? paint("dim", summary.outcome === "pass" ? " [pass]" : " [concerns]")
+        : paint("yellow", " [no summary]");
+      lines.push(`  ${paint(tickColor, "✓")} ${paint("bold", ruleId)}${outcomeTag}`);
+      for (const chk of checks) {
+        const loc = chk.line !== undefined
+          ? `:${chk.line}${chk.lineEnd && chk.lineEnd !== chk.line ? `-${chk.lineEnd}` : ""}`
+          : "";
+        const cat = chk.category ? paint("dim", ` [${chk.category}]`) : "";
+        lines.push(`      ${paint("green", "·")} ${paint("dim", `${chk.path}${loc}`)}${cat} ${chk.message}`);
+      }
+      if (summary) {
+        for (const ml of summary.checked.split("\n")) {
+          lines.push(paint("dim", `      checked: ${ml}`));
+        }
+        for (const ml of summary.rationale.split("\n")) {
+          lines.push(paint("dim", `      why: ${ml}`));
+        }
+      }
+    }
+    lines.push("");
+  }
+
   if (report.findings.length === 0) {
     lines.push(paint("green", "  no findings"));
   } else {
@@ -121,10 +170,35 @@ export function emitPretty(report: RunReport): void {
   process.stdout.write(lines.join("\n") + "\n");
 }
 
+/** Rules that finished healthily (not errored, not timed out, not skipped)
+ *  but did not call `report_review_summary` — agents are required to sign off
+ *  with exactly one summary call, so absence means the agent either silently
+ *  exited or never reached the MCP. The pretty output surfaces this as a
+ *  prominent warning so a "no findings" result isn't mistaken for a clean
+ *  review. */
+export function detectIncompleteReviews(report: RunReport): Array<{ id: string }> {
+  return report.rules
+    .filter(
+      (r) =>
+        r.ok &&
+        !r.timedOut &&
+        !r.skipped &&
+        (r.summaryCount ?? 0) === 0,
+    )
+    .map((r) => ({ id: r.id }));
+}
+
 /** Rules where the agent emitted substantial assistant prose but reported no
  *  findings — symptomatic of a model that wrote its findings as text instead
  *  of calling the MCP tool. Excludes errored, timed-out, and skipped rules
- *  (those have their own banners and the text-loss story doesn't apply). */
+ *  (those have their own banners and the text-loss story doesn't apply).
+ *
+ *  Also suppressed when the rule emitted a `report_review_summary` call. The
+ *  summary call is a stronger signal that the agent followed the protocol —
+ *  in the v3 world, an agent that signed off is producing prose around real
+ *  tool calls (narration, per-check rationale), not lost findings. The
+ *  `detectIncompleteReviews` banner is the better warning when there's no
+ *  summary, and we don't want both firing on the same rule. */
 export function detectPossiblySilencedRules(
   report: RunReport,
 ): Array<{ id: string; textChars: number }> {
@@ -135,6 +209,7 @@ export function detectPossiblySilencedRules(
         !r.timedOut &&
         !r.skipped &&
         r.findingCount === 0 &&
+        (r.summaryCount ?? 0) === 0 &&
         r.diagnostics !== undefined &&
         r.diagnostics.textChars >= SILENCED_TEXT_THRESHOLD,
     )

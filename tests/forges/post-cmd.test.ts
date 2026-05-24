@@ -8,7 +8,7 @@ import type { ForgeAdapter, ForgeAdapterFactory, PostOptions, PostResult } from 
 import type { RunReport } from "../../src/types.js";
 
 const VALID_REPORT: RunReport = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   runId: "run-1",
   startedAt: new Date(0).toISOString(),
   completedAt: new Date(0).toISOString(),
@@ -24,6 +24,8 @@ const VALID_REPORT: RunReport = {
   rules: [],
   findings: [],
   resolutions: [],
+  summaries: [],
+  checks: [],
 };
 
 interface MockState {
@@ -92,6 +94,21 @@ describe("runForgePost", () => {
   it("accepts schemaVersion 1 (the v1 contract is still supported)", async () => {
     const reportPath = join(dir, "report.json");
     writeFileSync(reportPath, JSON.stringify({ ...VALID_REPORT, schemaVersion: 1 }));
+
+    await expect(
+      runForgePost({
+        forge: "mock-forge",
+        reportPath,
+        flags: {},
+        dryRun: false,
+      }),
+    ).resolves.toBeDefined();
+    expect(state.posts).toHaveLength(1);
+  });
+
+  it("accepts schemaVersion 2 (the v2 contract is still supported)", async () => {
+    const reportPath = join(dir, "report.json");
+    writeFileSync(reportPath, JSON.stringify({ ...VALID_REPORT, schemaVersion: 2 }));
 
     await expect(
       runForgePost({
