@@ -4,6 +4,11 @@ All notable changes to `revu-ai` are documented here. The format follows [Keep a
 
 ## 0.3.0 — 2026-05-24
 
+### Breaking changes
+
+- **`RunReport.schemaVersion` bumped from `2` to `3`.** New required fields on the contract: `summaryCount` and `checkCount` on every `RuleResult`; top-level `summaries: ReviewSummary[]` and `checks: Check[]` arrays. `revu-ai github post` accepts v1, v2, and v3 reports for back-compat.
+- **Type exports added to the package's main export:** `Check`, `ReviewSummary`, `Resolution`. Consumers handling the new `RunReport.summaries` / `RunReport.checks` fields can now type them properly without reaching into `dist/types.js` paths.
+
 ### Added
 
 - **`mcp__revu__report_review_summary` MCP tool — REQUIRED final sign-off.** Every review agent must call this exactly once before stopping; the call carries `outcome` ("pass" / "concerns"), `checked` (concrete description of what was inspected), and `rationale` (why the outcome holds). The runner uses the call's presence to detect agents that silently exited or never reached the MCP — a "no findings" run from an agent that didn't sign off is now flagged as a possibly-incomplete review rather than rendered as a clean tick.

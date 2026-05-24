@@ -118,8 +118,11 @@ export interface ReviewSummary {
 
 export interface RunReport {
   /** Bumped to 2 when prior-run-aware features (resolutions, fingerprint, commentId) were added.
-   *  Readers SHOULD accept v1 reports and treat missing fields as defaults. */
-  schemaVersion: 2;
+   *  Bumped to 3 when the review-summary protocol arrived: required `summaryCount`/`checkCount`
+   *  on each RuleResult, and required `summaries: ReviewSummary[]` / `checks: Check[]` arrays
+   *  on the report.
+   *  Readers SHOULD accept v1, v2, and v3 reports and treat missing fields as defaults. */
+  schemaVersion: 3;
   runId: string;
   startedAt: string;
   completedAt: string;

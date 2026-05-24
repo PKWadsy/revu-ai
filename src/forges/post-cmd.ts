@@ -27,8 +27,8 @@ export async function runForgePost(options: ForgePostOptions): Promise<PostResul
     : readFileSync(options.reportPath, "utf8");
 
   const report = JSON.parse(reportText) as RunReport;
-  if (report.schemaVersion !== 2 && (report.schemaVersion as number) !== 1) {
-    throw new Error(`Unsupported report schemaVersion ${String(report.schemaVersion)}; expected 1 or 2.`);
+  if (!isSupportedSchemaVersion(report.schemaVersion)) {
+    throw new Error(`Unsupported report schemaVersion ${String(report.schemaVersion)}; expected 1, 2, or 3.`);
   }
 
   let priorReport: RunReport | undefined;
@@ -36,9 +36,9 @@ export async function runForgePost(options: ForgePostOptions): Promise<PostResul
     try {
       const priorText = readFileSync(options.priorReportPath, "utf8");
       priorReport = JSON.parse(priorText) as RunReport;
-      if (priorReport.schemaVersion !== 2 && (priorReport.schemaVersion as number) !== 1) {
+      if (!isSupportedSchemaVersion(priorReport.schemaVersion)) {
         throw new Error(
-          `Unsupported prior report schemaVersion ${String(priorReport.schemaVersion)}; expected 1 or 2.`,
+          `Unsupported prior report schemaVersion ${String(priorReport.schemaVersion)}; expected 1, 2, or 3.`,
         );
       }
     } catch (e) {
@@ -66,6 +66,10 @@ export async function runForgePost(options: ForgePostOptions): Promise<PostResul
   }
 
   return result;
+}
+
+function isSupportedSchemaVersion(v: unknown): boolean {
+  return v === 1 || v === 2 || v === 3;
 }
 
 function defaultReadStdin(): Promise<string> {

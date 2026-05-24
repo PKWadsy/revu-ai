@@ -278,7 +278,7 @@ describe("runner — priorReport flow", () => {
 
     try {
       const priorReport: import("../src/types.js").RunReport = {
-        schemaVersion: 2,
+        schemaVersion: 3,
         runId: "prev-run",
         startedAt: new Date().toISOString(),
         completedAt: new Date().toISOString(),

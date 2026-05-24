@@ -192,19 +192,30 @@ The JSON shape is the stable contract for downstream tooling:
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 3,
   "runId": "...",
   "startedAt": "...",
   "completedAt": "...",
   "reviewTarget": { "mode": "ref-range", "base": "origin/main", "baseSha": "...",
                     "head": "HEAD", "headSha": "...", "changedFiles": ["..."] },
   "rules": [{ "id": "dead-code", "path": ".revu/dead-code.revu.md",
-              "ok": true, "durationMs": 12345, "findingCount": 1 }],
+              "ok": true, "durationMs": 12345, "findingCount": 1,
+              "summaryCount": 1, "checkCount": 3 }],
   "findings": [{ "ruleId": "dead-code", "severity": "high",
                  "path": "src/foo.ts", "line": 42, "lineEnd": 47,
-                 "message": "...", "category": "unused-export" }]
+                 "message": "...", "category": "unused-export",
+                 "fingerprint": "a1b2c3d4e5f6" }],
+  "resolutions": [{ "ruleId": "dead-code", "fingerprint": "deadbeef0001",
+                    "reason": "fixed", "resolvedAtSha": "..." }],
+  "summaries": [{ "ruleId": "dead-code", "outcome": "concerns",
+                  "checked": "src/foo.ts exports vs prior shape",
+                  "rationale": "one new export crosses the public surface" }],
+  "checks": [{ "ruleId": "dead-code", "path": "src/foo.ts", "line": 10,
+               "message": "internal helper remains unused outside this file" }]
 }
 ```
+
+The schema is additive across versions: v1 (initial), v2 (added `resolutions`, per-finding `fingerprint`/`priorFp`/`commentId`), v3 (added per-rule `summaryCount`/`checkCount` and top-level `summaries`/`checks`). The `revu-ai github post` step accepts v1, v2, and v3 reports.
 
 ## Forge integrations
 

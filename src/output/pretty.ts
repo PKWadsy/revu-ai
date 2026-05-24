@@ -191,7 +191,14 @@ export function detectIncompleteReviews(report: RunReport): Array<{ id: string }
 /** Rules where the agent emitted substantial assistant prose but reported no
  *  findings — symptomatic of a model that wrote its findings as text instead
  *  of calling the MCP tool. Excludes errored, timed-out, and skipped rules
- *  (those have their own banners and the text-loss story doesn't apply). */
+ *  (those have their own banners and the text-loss story doesn't apply).
+ *
+ *  Also suppressed when the rule emitted a `report_review_summary` call. The
+ *  summary call is a stronger signal that the agent followed the protocol —
+ *  in the v3 world, an agent that signed off is producing prose around real
+ *  tool calls (narration, per-check rationale), not lost findings. The
+ *  `detectIncompleteReviews` banner is the better warning when there's no
+ *  summary, and we don't want both firing on the same rule. */
 export function detectPossiblySilencedRules(
   report: RunReport,
 ): Array<{ id: string; textChars: number }> {
@@ -202,6 +209,7 @@ export function detectPossiblySilencedRules(
         !r.timedOut &&
         !r.skipped &&
         r.findingCount === 0 &&
+        (r.summaryCount ?? 0) === 0 &&
         r.diagnostics !== undefined &&
         r.diagnostics.textChars >= SILENCED_TEXT_THRESHOLD,
     )

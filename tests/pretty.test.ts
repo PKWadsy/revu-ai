@@ -8,7 +8,7 @@ import type { RunReport, RuleResult } from "../src/types.js";
 
 function makeReport(rules: RuleResult[]): RunReport {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     runId: "test-run-id",
     startedAt: new Date().toISOString(),
     completedAt: new Date().toISOString(),
@@ -30,7 +30,7 @@ function makeReport(rules: RuleResult[]): RunReport {
 const BASE_COUNTS = { summaryCount: 1, checkCount: 0 } as const;
 
 describe("detectPossiblySilencedRules", () => {
-  it("flags rules with substantive text output but zero findings", () => {
+  it("flags rules with substantive text output but zero findings (and no summary)", () => {
     const report = makeReport([
       {
         id: ".revu/alpha",
@@ -38,7 +38,8 @@ describe("detectPossiblySilencedRules", () => {
         ok: true,
         durationMs: 100,
         findingCount: 0,
-        ...BASE_COUNTS,
+        summaryCount: 0,
+        checkCount: 0,
         diagnostics: { textChars: SILENCED_TEXT_THRESHOLD + 50, findingToolCalls: 0 },
       },
     ]);
@@ -128,6 +129,22 @@ describe("detectPossiblySilencedRules", () => {
         durationMs: 100,
         findingCount: 0,
         ...BASE_COUNTS,
+      },
+    ]);
+    expect(detectPossiblySilencedRules(report)).toEqual([]);
+  });
+
+  it("does not flag rules that emitted a review summary — prose is narration around real tool calls, not lost findings", () => {
+    const report = makeReport([
+      {
+        id: ".revu/alpha",
+        path: ".revu/alpha.revu.md",
+        ok: true,
+        durationMs: 100,
+        findingCount: 0,
+        summaryCount: 1,
+        checkCount: 5,
+        diagnostics: { textChars: SILENCED_TEXT_THRESHOLD * 10, findingToolCalls: 0 },
       },
     ]);
     expect(detectPossiblySilencedRules(report)).toEqual([]);

@@ -242,7 +242,7 @@ export async function run(cwd: string, config: RevuConfig, hooks: RunHooks = {},
   const checks = sidecar.aggregator.allChecks().sort(checkSort);
 
   const report: RunReport = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     runId,
     startedAt,
     completedAt: new Date().toISOString(),
