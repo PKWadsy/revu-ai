@@ -24,6 +24,16 @@ export interface RuleResult {
   ok: boolean;
   durationMs: number;
   findingCount: number;
+  /** Count of `report_review_summary` calls the agent emitted via the MCP sidecar.
+   *  Expected to be exactly 1 for a healthy review. 0 means the agent never
+   *  signed off — usually a symptom of a broken / silent agent — and surfaces
+   *  as an "incomplete review" warning. >1 means the agent called it multiple
+   *  times; only the first is kept. Always present on non-skipped rules. */
+  summaryCount: number;
+  /** Count of `report_check` calls the agent emitted — incremental compliance
+   *  notes. No required minimum; high values just mean the agent showed its
+   *  working. */
+  checkCount: number;
   errorMessage?: string;
   /** True if this rule was stopped by the per-rule timeout. */
   timedOut?: boolean;
@@ -83,6 +93,29 @@ export interface Resolution {
   resolvedAtSha: string;
 }
 
+export interface Check {
+  ruleId: string;
+  /** Repo-relative file path the agent verified. */
+  path: string;
+  line?: number;
+  lineEnd?: number;
+  /** What was verified and the evidence that it complies with the rule. */
+  message: string;
+  category?: string;
+}
+
+export interface ReviewSummary {
+  ruleId: string;
+  /** Agent's explicit declaration. "pass" = no findings reported for this rule;
+   *  "concerns" = one or more findings reported. The runner cross-checks this
+   *  against the recorded finding count. */
+  outcome: "pass" | "concerns";
+  /** Concrete description of what the agent examined (files, behaviours, areas). */
+  checked: string;
+  /** Why the outcome holds, tied to what was checked. */
+  rationale: string;
+}
+
 export interface RunReport {
   /** Bumped to 2 when prior-run-aware features (resolutions, fingerprint, commentId) were added.
    *  Readers SHOULD accept v1 reports and treat missing fields as defaults. */
@@ -95,6 +128,12 @@ export interface RunReport {
   findings: Finding[];
   /** Resolutions emitted by reviewers this run, OR carried forward from `--prior-report`. */
   resolutions: Resolution[];
+  /** Per-rule review summaries — one per rule that called `report_review_summary`.
+   *  A rule with no entry here is flagged as a possibly-incomplete review. */
+  summaries: ReviewSummary[];
+  /** All compliance checks the agents emitted via `report_check`. Granular
+   *  positive evidence; not findings, not subject to resolution. */
+  checks: Check[];
 }
 
 export interface RevuConfig {

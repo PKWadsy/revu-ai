@@ -2,6 +2,19 @@
 
 All notable changes to `revu-ai` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project's pre-1.0 versioning treats minor bumps as breaking-change boundaries.
 
+## 0.3.0 — 2026-05-24
+
+### Added
+
+- **`mcp__revu__report_review_summary` MCP tool — REQUIRED final sign-off.** Every review agent must call this exactly once before stopping; the call carries `outcome` ("pass" / "concerns"), `checked` (concrete description of what was inspected), and `rationale` (why the outcome holds). The runner uses the call's presence to detect agents that silently exited or never reached the MCP — a "no findings" run from an agent that didn't sign off is now flagged as a possibly-incomplete review rather than rendered as a clean tick.
+- **`mcp__revu__report_check` MCP tool — incremental compliance evidence.** Agents call this as they work through the diff, once per concrete thing verified. Checks are NOT findings: they need no resolution, do not contribute to severity, and do not affect exit codes. The CLI streams a live `✓ <ruleId> <path>:<line> <message>` line for each check, and the final pretty output groups them under a per-rule "verified" block alongside the summary. The goal: a clean review now shows its working rather than just emitting a tick.
+- **`RunReport.summaries` and `RunReport.checks` arrays** (additive). `RuleResult.summaryCount` and `RuleResult.checkCount` (always present on non-skipped rules).
+- **Incomplete-review banner in pretty output.** When a healthy rule (not errored, not timed-out, not skipped) finishes without emitting a `report_review_summary`, a yellow banner names it explicitly so a "no findings" outcome can be trusted vs. treated as a possible false negative.
+
+### Changed
+
+- **Review system prompt overhauled.** New REQUIRED sections describe the two tools above and the order they should be called in. The earlier "If you find nothing, just stop" instruction is replaced with explicit sign-off guidance: even when a rule is out of scope for the diff, the agent must call `report_review_summary` with `outcome: "pass"` and a `checked` / `rationale` explaining why the rule doesn't apply.
+
 ## 0.2.2 — 2026-05-23
 
 ### Added

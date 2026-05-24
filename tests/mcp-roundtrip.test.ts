@@ -119,6 +119,103 @@ describe("MCP sidecar roundtrip", () => {
     }
   });
 
+  it("records a review summary via report_review_summary", async () => {
+    const sidecar = await startSidecar({ repoRoot: process.cwd() });
+    const { client, transport } = clientFor(sidecar.url, sidecar.authToken, "rule-summary");
+    try {
+      await client.connect(transport);
+      const res = await client.callTool({
+        name: "report_review_summary",
+        arguments: {
+          outcome: "pass",
+          checked: "src/foo.ts: exports unchanged",
+          rationale: "no breaking change",
+        },
+      });
+      expect((res as { isError?: boolean }).isError).toBeFalsy();
+      const summary = sidecar.aggregator.summaryFor("rule-summary");
+      expect(summary).toMatchObject({
+        outcome: "pass",
+        checked: "src/foo.ts: exports unchanged",
+        rationale: "no breaking change",
+      });
+    } finally {
+      await client.close();
+      await sidecar.shutdown();
+    }
+  });
+
+  it("rejects a duplicate report_review_summary for the same rule", async () => {
+    const sidecar = await startSidecar({ repoRoot: process.cwd() });
+    const { client, transport } = clientFor(sidecar.url, sidecar.authToken, "rule-dup-summary");
+    try {
+      await client.connect(transport);
+      await client.callTool({
+        name: "report_review_summary",
+        arguments: { outcome: "pass", checked: "a", rationale: "b" },
+      });
+      const res2 = await client.callTool({
+        name: "report_review_summary",
+        arguments: { outcome: "concerns", checked: "c", rationale: "d" },
+      });
+      const text = (res2 as { content?: Array<{ text?: string }> }).content?.[0]?.text ?? "";
+      expect(text).toMatch(/duplicate/i);
+      // Only the first call wins.
+      expect(sidecar.aggregator.summaryFor("rule-dup-summary")?.outcome).toBe("pass");
+    } finally {
+      await client.close();
+      await sidecar.shutdown();
+    }
+  });
+
+  it("records compliance checks via report_check", async () => {
+    const sidecar = await startSidecar({ repoRoot: process.cwd() });
+    const { client, transport } = clientFor(sidecar.url, sidecar.authToken, "rule-checks");
+    try {
+      await client.connect(transport);
+      await client.callTool({
+        name: "report_check",
+        arguments: {
+          path: "src/runner.ts",
+          line: 95,
+          lineEnd: 160,
+          message: "filePatterns guard is local and side-effect-free",
+        },
+      });
+      await client.callTool({
+        name: "report_check",
+        arguments: { path: "src/runner.ts", line: 95, lineEnd: 160, message: "filePatterns guard is local and side-effect-free" },
+      });
+      await client.callTool({
+        name: "report_check",
+        arguments: { path: "src/runner.ts", message: "no new globals introduced" },
+      });
+      const checks = sidecar.aggregator.checksFor("rule-checks");
+      // Duplicate (same path/line/lineEnd/message) collapsed → 2 entries.
+      expect(checks).toHaveLength(2);
+      expect(checks[0]).toMatchObject({ ruleId: "rule-checks", line: 95, lineEnd: 160 });
+    } finally {
+      await client.close();
+      await sidecar.shutdown();
+    }
+  });
+
+  it("rejects report_check with lineEnd but no line", async () => {
+    const sidecar = await startSidecar({ repoRoot: process.cwd() });
+    const { client, transport } = clientFor(sidecar.url, sidecar.authToken, "rule-bad-check");
+    try {
+      await client.connect(transport);
+      const res = await client.callTool({
+        name: "report_check",
+        arguments: { path: "src/x.ts", lineEnd: 10, message: "?" },
+      });
+      expect((res as { isError?: boolean }).isError).toBe(true);
+    } finally {
+      await client.close();
+      await sidecar.shutdown();
+    }
+  });
+
   it("does not register write_rule_file unless the sidecar is in scaffold mode", async () => {
     const sidecar = await startSidecar({ repoRoot: process.cwd() });
     const { client, transport } = clientFor(sidecar.url, sidecar.authToken);

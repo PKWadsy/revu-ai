@@ -17,7 +17,10 @@ function git(cwd: string, ...args: string[]): string {
  * Mock provider that talks to the runner-provided MCP sidecar over the real wire,
  * so we exercise everything except the actual Claude agent.
  */
-function makeMockProvider(plan: Record<string, Array<{ severity: string; path: string; line?: number; message: string }>>): ReviewAgentFactory {
+function makeMockProvider(
+  plan: Record<string, Array<{ severity: string; path: string; line?: number; message: string }>>,
+  opts: { emitSummary?: boolean } = { emitSummary: true },
+): ReviewAgentFactory {
   return (): ReviewAgent => ({
     name: "mock",
     async run(input: ReviewInput) {
@@ -36,6 +39,16 @@ function makeMockProvider(plan: Record<string, Array<{ severity: string; path: s
         await client.connect(transport);
         for (const f of findings) {
           await client.callTool({ name: "report_finding", arguments: f });
+        }
+        if (opts.emitSummary !== false) {
+          await client.callTool({
+            name: "report_review_summary",
+            arguments: {
+              outcome: findings.length > 0 ? "concerns" : "pass",
+              checked: `mock check for ${input.ruleId}`,
+              rationale: "mock rationale",
+            },
+          });
         }
       } finally {
         await client.close();
@@ -140,8 +153,73 @@ describe("runner", () => {
       const alpha = report.rules.find((r) => r.id === ".revu/alpha");
       expect(alpha?.diagnostics).toEqual({ textChars: 600, findingToolCalls: 0 });
       expect(alpha?.findingCount).toBe(0);
+      // The mock-diag provider never talks to the MCP, so summaryCount stays 0
+      // — the runner populates the field unconditionally and the pretty-output
+      // banner uses it to detect incomplete reviews.
+      expect(alpha?.summaryCount).toBe(0);
+      expect(alpha?.checkCount).toBe(0);
     } finally {
       unregisterHarness("mock-diag");
+    }
+  });
+
+  it("records report_check and report_review_summary calls in the report", async () => {
+    const ackProvider: ReviewAgentFactory = (): ReviewAgent => ({
+      name: "mock-ack",
+      async run(input: ReviewInput) {
+        const client = new Client({ name: "mock-agent", version: "0.0.1" });
+        const transport = new StreamableHTTPClientTransport(new URL(input.mcp.url), {
+          requestInit: {
+            headers: {
+              Authorization: `Bearer ${input.mcp.authToken}`,
+              "X-Revu-Rule-Id": input.ruleId,
+            },
+          },
+        });
+        try {
+          await client.connect(transport);
+          await client.callTool({
+            name: "report_check",
+            arguments: { path: "src.ts", line: 1, message: `${input.ruleId} verified src.ts` },
+          });
+          await client.callTool({
+            name: "report_review_summary",
+            arguments: {
+              outcome: "pass",
+              checked: `inspected src.ts for ${input.ruleId}`,
+              rationale: `${input.ruleId} rule is satisfied`,
+            },
+          });
+        } finally {
+          await client.close();
+        }
+        return { ruleId: input.ruleId, ok: true, durationMs: 1 };
+      },
+    });
+    registerHarness("mock-ack", ackProvider);
+    try {
+      const { report } = await run(dir, {
+        pattern: "**/*.revu.md",
+        harness: "mock-ack",
+        workingTree: false,
+        staged: false,
+        output: "json",
+        failOn: "critical",
+        force: false,
+        timeoutMs: 60_000,
+      });
+      const alpha = report.rules.find((r) => r.id === ".revu/alpha");
+      expect(alpha?.summaryCount).toBe(1);
+      expect(alpha?.checkCount).toBe(1);
+      expect(report.summaries).toHaveLength(2);
+      expect(report.summaries.find((s) => s.ruleId === ".revu/alpha")).toMatchObject({
+        outcome: "pass",
+        checked: "inspected src.ts for .revu/alpha",
+      });
+      expect(report.checks).toHaveLength(2);
+      expect(report.checks.every((c) => c.path === "src.ts" && c.line === 1)).toBe(true);
+    } finally {
+      unregisterHarness("mock-ack");
     }
   });
 
@@ -224,6 +302,8 @@ describe("runner — priorReport flow", () => {
         resolutions: [
           { ruleId: ".revu/alpha", fingerprint: "alpha-stale-fp", reason: "fixed", resolvedAtSha: "deadbee" },
         ],
+        summaries: [],
+        checks: [],
       };
 
       const { report } = await run(

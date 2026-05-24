@@ -53,6 +53,69 @@ Use this when reviewing prior findings provided in your system prompt: if the ne
 Do NOT use this tool for findings that are still open at the same location — just stay silent and the runner will keep them open.
 Do NOT use this tool for findings that have moved to a new location — instead emit a fresh \`report_finding\` with the prior fingerprint passed via \`priorFp\`.`;
 
+export const ReportCheckShape = {
+  path: z
+    .string()
+    .min(1)
+    .describe("Repo-relative file path you just verified, forward-slash separated."),
+  line: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe("Optional 1-indexed line where the verified area starts."),
+  lineEnd: z
+    .number()
+    .int()
+    .positive()
+    .optional()
+    .describe("Optional 1-indexed line where the verified area ends. If set, line must also be set."),
+  message: z
+    .string()
+    .min(1)
+    .describe(
+      "What you verified and why it complies with the rule. Be specific — name the rule clause / contract / property you checked against. Example: 'public exports are unchanged: signatures of `Foo`, `Bar` in src/api.ts:45-92 match prior shape.'",
+    ),
+  category: z.string().optional().describe("Optional free-form category tag (same field as report_finding)."),
+} as const;
+
+export const ReportCheckObject = z.object(ReportCheckShape);
+export type ReportCheckInput = z.infer<typeof ReportCheckObject>;
+
+export const REPORT_CHECK_DESCRIPTION = `Record a compliance check — a positive verification that some specific part of the change conforms to the rule. Call this as you go, NOT just at the end.
+Checks are NOT findings: they need no resolution, do not contribute to severity, and do not affect exit codes. Their purpose is to give the user live, granular evidence that the agent actually inspected the code (rather than guessing or skipping). Each call is a single "yep, I verified X and it's good because Y" note.
+Use freely as you work through the diff — one call per concrete thing you've verified. If you read a file and concluded that nothing in it violates the rule, that's worth a check. If you traced a contract through three files and they line up, that's a check (or several).
+Aim for specific, evidence-backed messages, not vague ones. Bad: "looks good." Good: "no new global state introduced in src/runner.ts:95-160 — the new filePatterns branch is local to the rule loop."
+\`report_review_summary\` is still required at the end as the one-shot sign-off; \`report_check\` is the running commentary that gets you there.`;
+
+export const ReportReviewSummaryShape = {
+  outcome: z
+    .enum(["pass", "concerns"])
+    .describe(
+      "`pass` if you reported zero findings via report_finding for this rule; `concerns` if you reported one or more. This is your explicit declaration — the runner cross-checks it against the recorded finding count.",
+    ),
+  checked: z
+    .string()
+    .min(1)
+    .describe(
+      "A concrete description of what you actually examined to reach your conclusion. List specific files, functions, or behaviors — not generic phrases like 'the diff' or 'the changes'. Example: 'src/runner.ts lines 95-160: the new filePatterns guard branch and its three failure paths; plus the corresponding test cases in tests/runner.test.ts.'",
+    ),
+  rationale: z
+    .string()
+    .min(1)
+    .describe(
+      "A brief explanation tying what you checked to why the outcome holds. For `pass`, state which aspect of the rule the code satisfies and on what evidence. For `concerns`, summarise any context not captured in individual findings. 1-3 sentences.",
+    ),
+} as const;
+
+export const ReportReviewSummaryObject = z.object(ReportReviewSummaryShape);
+export type ReportReviewSummaryInput = z.infer<typeof ReportReviewSummaryObject>;
+
+export const REPORT_REVIEW_SUMMARY_DESCRIPTION = `Report a one-line review summary for this rule. REQUIRED: every review run MUST call this tool exactly once before stopping.
+The runner uses this call to confirm the agent actually performed the review (vs. silently exiting, writing findings as prose, or never reaching the MCP). A run that emits no summary is flagged as a possibly-incomplete review.
+Call this AFTER you have reported any findings via \`report_finding\` (and any prior-finding resolutions via \`mark_finding_resolved\`). Pass \`outcome\` = "pass" when you reported zero findings, or "concerns" when you reported one or more.
+If the rule is out of scope for the diff (e.g. the rule covers Python tests but no .py files changed), still call this with \`outcome\` = "pass" and a \`checked\` / \`rationale\` describing that you inspected the diff and concluded the rule does not apply.`;
+
 export const WriteRuleFileShape = {
   path: z
     .string()

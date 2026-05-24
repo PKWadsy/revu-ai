@@ -196,8 +196,14 @@ program
           process.stderr.write(`${paint("cyan", "▶")} ${paint("bold", id)}\n`),
         onActivity: showProgress
           ? (id, a) => {
-              if (a.kind === "tool" && a.name === "mcp__revu__report_finding") {
-                // Findings get their own line via onFinding — skip the tool-use noise.
+              if (
+                a.kind === "tool" &&
+                (a.name === "mcp__revu__report_finding" ||
+                  a.name === "mcp__revu__report_check" ||
+                  a.name === "mcp__revu__report_review_summary")
+              ) {
+                // These get their own lines via onFinding / onCheck / onSummary
+                // — skip the duplicate tool-use noise.
                 return;
               }
               if (a.kind === "tool") {
@@ -217,6 +223,24 @@ program
               const sev = paint(SEV_COLOR[f.severity], SEV_LABEL[f.severity]);
               process.stderr.write(
                 `  ${paint("dim", f.ruleId)} ${paint("bold", paint(SEV_COLOR[f.severity], "✱"))} ${sev} ${paint("bold", f.path)}${paint("dim", loc)}\n`,
+              );
+            }
+          : undefined,
+        onCheck: showProgress
+          ? (chk) => {
+              const loc = chk.line !== undefined
+                ? `:${chk.line}${chk.lineEnd && chk.lineEnd !== chk.line ? `-${chk.lineEnd}` : ""}`
+                : "";
+              process.stderr.write(
+                `  ${paint("dim", chk.ruleId)} ${paint("green", "✓")} ${paint("dim", `${chk.path}${loc}`)} ${chk.message}\n`,
+              );
+            }
+          : undefined,
+        onSummary: showProgress
+          ? (s) => {
+              const tag = s.outcome === "pass" ? paint("green", "pass") : paint("yellow", "concerns");
+              process.stderr.write(
+                `  ${paint("dim", s.ruleId)} ${paint("bold", "▣ summary")} [${tag}] ${paint("dim", s.checked)}\n`,
               );
             }
           : undefined,
