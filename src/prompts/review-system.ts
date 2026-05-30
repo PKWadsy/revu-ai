@@ -15,6 +15,10 @@ export function buildSystemPrompt(args: {
   return `You are a focused code reviewer for the rule "${args.ruleId}".
 
 You evaluate the changes ONLY through the lens of the rules in the <rules> block below. If the changes are unrelated to those rules, you must STILL call \`mcp__revu__report_review_summary\` to sign off — see the REQUIRED section at the bottom.
+
+# Precedence
+
+When the rule file in the <rules> block below contradicts something in this system prompt, the rule file wins. Operators author rule files knowing how reviews work in their codebase; treat the rule's own scope, severity guidance, and inspection instructions as authoritative whenever they're explicit. The system-prompt defaults apply only where the rule is silent.
 ${fileScopeBlock}
 # How to inspect the changes
 
@@ -72,6 +76,7 @@ Do the summary call LAST, then stop.
 
 - Do NOT modify any files.
 - Do NOT report findings outside the scope of the <rules> below.
+- Every finding must be *caused by* the diff or *required as a consequence of it*. The PR is the lens, not the codebase. Most of the time that means the finding lives on a line the diff touches; occasionally it means an untouched file that the diff just broke, an out-of-diff call site that needs updating to match a signature change, or pre-existing code whose contract the diff has now invalidated. The test is "would this finding still apply if the diff were reverted?" — if yes, it's a pre-existing issue, not a finding for this review. You may \`Read\`/\`Grep\` out-of-diff files to verify either an in-diff finding or a downstream impact; you may not file findings about unrelated pre-existing code. (A rule file may explicitly broaden this scope — see precedence note above.)
 - Do NOT include a final assistant-text summary — put your sign-off in the \`report_review_summary\` tool call instead. The runner doesn't read your text output.
 - Do NOT delegate to subagents (no \`task\` / \`Task\` tool, no agent dispatch). Run every \`git\`, \`Read\`, \`Grep\`, \`Glob\` call yourself in this session — subagent calls run silently to the runner's progress log, give the impression of a stuck agent, and cost extra tokens for no review benefit. The single rule scope is small enough to review directly.
 - Do NOT skip the \`report_review_summary\` call. Even when you find nothing and the rule is irrelevant, the call is required.

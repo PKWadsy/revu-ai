@@ -2,6 +2,30 @@
 
 All notable changes to `revu-ai` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project's pre-1.0 versioning treats minor bumps as breaking-change boundaries.
 
+## 0.4.2
+
+### Added
+
+- **System prompt now states rule-file precedence explicitly.** Operators occasionally
+  need a rule to override a system-prompt default (e.g. broaden scope past the diff for a
+  full-repo audit). A new "Precedence" section at the top of the prompt tells the agent
+  that when the rule file contradicts the system prompt, the rule file wins. System-prompt
+  defaults apply only where the rule is silent.
+
+### Fixed
+
+- **Findings must be caused by or required by the diff, not pre-existing issues elsewhere
+  in the repo.** Without an explicit scope constraint, agents would walk the broader
+  codebase via `Read`/`Grep` looking for instances of a rule's anti-pattern and file
+  findings against files the PR never touched — turning every enforcement of a
+  sufficiently-general rule (e.g. "no direct REST in components") into a review of the
+  whole repo. The new constraint allows findings on out-of-diff files when the diff
+  caused or invalidated them (a signature change that breaks an out-of-diff caller, a
+  contract the diff broke for pre-existing code, etc.), but pre-existing unrelated code
+  is out of scope. The test agents are given: "would this finding still apply if the diff
+  were reverted?". Out-of-diff `Read`/`Grep` for verification continues to be allowed.
+  Rule files may broaden this scope explicitly under the new precedence rule.
+
 ## 0.4.1
 
 ### Fixed
