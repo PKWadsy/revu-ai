@@ -85,7 +85,9 @@ export function loadConfig(repoRoot: string, overrides: CliOverrides): RevuConfi
       );
     }
     merged.gateOn = overrides.gateOn as Severity;
-  } else {
+  } else if (fromFile.gateOn === undefined) {
+    // Neither --gate-on nor a config-file gateOn was supplied → track the resolved failOn.
+    // (A config-file gateOn already sits in merged.gateOn via ...fromFile and wins over this fallback.)
     merged.gateOn = merged.failOn;
   }
 

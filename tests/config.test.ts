@@ -50,13 +50,36 @@ describe("loadConfig — gateOn", () => {
     }
   });
 
-  it("CLI --fail-on overrides a config-file gateOn when --gate-on is absent", () => {
+  it("honors a config-file gateOn over the --fail-on fallback", () => {
     const dir = freshRepo();
     try {
       writeFileSync(join(dir, "revu.config.json"), JSON.stringify({ gateOn: "medium" }));
+      // No --gate-on supplied. An explicit config-file gateOn must win over the
+      // failOn-derived default — gateOn is not silently dragged to the CLI failOn.
       const cfg = loadConfig(dir, { failOn: "low" });
-      // No --gate-on supplied → fallback drags the gate to the CLI failOn, not the file's "medium".
-      expect(cfg.gateOn).toBe("low");
+      expect(cfg.gateOn).toBe("medium");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses a config-file gateOn when no CLI gate/fail flags are given", () => {
+    const dir = freshRepo();
+    try {
+      writeFileSync(join(dir, "revu.config.json"), JSON.stringify({ gateOn: "critical" }));
+      const cfg = loadConfig(dir, {});
+      expect(cfg.gateOn).toBe("critical");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("CLI --gate-on overrides a config-file gateOn", () => {
+    const dir = freshRepo();
+    try {
+      writeFileSync(join(dir, "revu.config.json"), JSON.stringify({ gateOn: "medium" }));
+      const cfg = loadConfig(dir, { gateOn: "critical" });
+      expect(cfg.gateOn).toBe("critical");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
