@@ -159,6 +159,10 @@ export interface RevuConfig {
   output: "pretty" | "json" | "github" | "auto";
   outputFile?: string;
   failOn: Severity;
+  /** Severity at/above which a completed stage stops the run (later stages don't spawn).
+   *  Defaults to the `failOn` value when `--gate-on` is not supplied. Orthogonal to `failOn`:
+   *  `failOn` sets the exit code, `gateOn` sets whether later stages run. */
+  gateOn: Severity;
   force: boolean;
   /** Per-agent wall-clock timeout in ms. Default 300_000 (5 minutes). */
   timeoutMs: number;

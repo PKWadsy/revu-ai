@@ -11,6 +11,7 @@ export const DEFAULT_CONFIG: RevuConfig = {
   harness: "claude-code",
   output: "auto",
   failOn: "high",
+  gateOn: "high",
   force: false,
   timeoutMs: 300_000,
 };
@@ -27,6 +28,7 @@ export interface CliOverrides {
   output?: "pretty" | "json" | "github";
   outputFile?: string;
   failOn?: string;
+  gateOn?: string;
   force?: boolean;
   config?: string;
   timeoutMs?: number;
@@ -72,6 +74,19 @@ export function loadConfig(repoRoot: string, overrides: CliOverrides): RevuConfi
       );
     }
     merged.failOn = overrides.failOn as Severity;
+  }
+
+  // --gate-on falls back to the resolved failOn when not supplied. A stage stops the
+  // pipeline once it produces a finding at/above this severity.
+  if (overrides.gateOn !== undefined) {
+    if (!SEVERITY_SET.has(overrides.gateOn as Severity)) {
+      throw new Error(
+        `Invalid --gate-on value: ${overrides.gateOn}. Expected one of: ${SEVERITIES.join(", ")}`,
+      );
+    }
+    merged.gateOn = overrides.gateOn as Severity;
+  } else {
+    merged.gateOn = merged.failOn;
   }
 
   if (merged.workingTree && merged.staged) {
