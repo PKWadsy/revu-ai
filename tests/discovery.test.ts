@@ -234,7 +234,7 @@ describe("parseFrontmatter — stage:", () => {
     expect(stage).toBeUndefined();
   });
 
-  it.each(["abc", "1.5", "-1", "0", ""])("throws on invalid stage %p", (bad) => {
+  it.each(["abc", "1.5", "-1", "0", "", "0x10", "1e2", "0o17", "+2", " "])("throws on invalid stage %p", (bad) => {
     expect(() => parseFrontmatter(`---\nstage: ${bad}\n---\n# body\n`)).toThrow(/stage/i);
   });
 });
@@ -277,5 +277,36 @@ describe("discoverRules — filePatterns from frontmatter", () => {
     const tsRule = rules.find((r) => r.ruleId === ".revu/ts-only");
     expect(tsRule?.content).toBe("# TS rule\n");
     expect(tsRule?.content).not.toContain("---");
+  });
+});
+
+describe("discoverRules — malformed stage: error wrapping", () => {
+  let filterDir: string;
+
+  function git(cwd: string, ...args: string[]) {
+    execFileSync("git", args, { cwd });
+  }
+
+  beforeAll(() => {
+    filterDir = mkdtempSync(join(tmpdir(), "revu-discovery-badstage-"));
+    git(filterDir, "init", "-q");
+    git(filterDir, "config", "user.email", "t@x");
+    git(filterDir, "config", "user.name", "t");
+    git(filterDir, "config", "commit.gpgsign", "false");
+
+    mkdirSync(join(filterDir, ".revu"), { recursive: true });
+    writeFileSync(join(filterDir, ".revu", "bad-stage.revu.md"), "---\nstage: abc\n---\n# bad\n");
+    git(filterDir, "add", ".");
+    git(filterDir, "commit", "-m", "bad stage");
+  });
+
+  afterAll(() => {
+    rmSync(filterDir, { recursive: true, force: true });
+  });
+
+  it("wraps a malformed stage: error with the rule file path", async () => {
+    await expect(discoverRules(filterDir, "**/*.revu.md")).rejects.toThrow(
+      /bad-stage\.revu\.md:.*stage/i,
+    );
   });
 });

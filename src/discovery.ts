@@ -209,11 +209,12 @@ function parseFrontmatterStage(frontmatter: string): number | undefined {
   const m = frontmatter.match(/^stage:\s*(.*)$/m);
   if (!m) return undefined;
   const raw = (m[1] ?? "").trim().replace(/^["']|["']$/g, "");
-  const n = Number(raw);
-  if (raw === "" || !Number.isInteger(n) || n < 1) {
+  // Decimal positive integers only. Number() would otherwise accept 0x10, 1e2, 0o17,
+  // +2, etc. — surprising for a field that drives run-global stage ordering.
+  if (!/^[1-9][0-9]*$/.test(raw)) {
     throw new Error(`Invalid stage: "${raw}" — stage must be a positive integer (1, 2, 3, …)`);
   }
-  return n;
+  return Number(raw);
 }
 
 export function _testing_deriveRuleId(rel: string): string {
