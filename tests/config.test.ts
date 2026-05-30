@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { loadConfig } from "../src/config.js";
@@ -45,6 +45,18 @@ describe("loadConfig — gateOn", () => {
     const dir = freshRepo();
     try {
       expect(() => loadConfig(dir, { gateOn: "banana" })).toThrow(/gate-on/i);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("CLI --fail-on overrides a config-file gateOn when --gate-on is absent", () => {
+    const dir = freshRepo();
+    try {
+      writeFileSync(join(dir, "revu.config.json"), JSON.stringify({ gateOn: "medium" }));
+      const cfg = loadConfig(dir, { failOn: "low" });
+      // No --gate-on supplied → fallback drags the gate to the CLI failOn, not the file's "medium".
+      expect(cfg.gateOn).toBe("low");
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
