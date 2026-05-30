@@ -161,6 +161,7 @@ program
   .option("--output <fmt>", "pretty | json | github")
   .option("--output-file <path>", "additionally write output to a file")
   .option("--fail-on <severity>", "exit non-zero threshold (default: high)")
+  .option("--gate-on <severity>", "stop the run after a stage that produces a finding ≥ this severity (default: --fail-on value)")
   .option("--timeout-ms <ms>", "per-rule wall-clock timeout in ms (default: 300000 = 5min); 0 disables", parseIntOpt0Allowed)
   .option("--prior-report <path>", "Prior --output-file report; reviewer agents see open prior findings as context")
   .option("--force", "ignore the no-changes pre-flight skip")
@@ -194,6 +195,14 @@ program
       const { report, exitCode } = await run(cwd, cfg, {
         onRuleStart: (id) =>
           process.stderr.write(`${paint("cyan", "▶")} ${paint("bold", id)}\n`),
+        onStageStart: (label, count) =>
+          process.stderr.write(
+            `${paint("magenta", "▣")} ${paint("bold", label)} ${paint("dim", `· ${count} rule${count === 1 ? "" : "s"}`)}\n`,
+          ),
+        onGate: (label, count, threshold) =>
+          process.stderr.write(
+            `${paint("yellow", paint("bold", "⛔ gated"))} ${paint("dim", `after ${label} — ${count} finding(s) ≥ ${threshold}; skipping later stages`)}\n`,
+          ),
         onActivity: showProgress
           ? (id, a) => {
               if (

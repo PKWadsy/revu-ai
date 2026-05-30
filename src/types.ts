@@ -16,6 +16,10 @@ export interface RuleFile {
   /** Glob patterns (repo-root-relative) specifying which changed files this rule applies to.
    *  Parsed from the YAML frontmatter `files:` field. When absent, the rule applies to all changed files. */
   filePatterns?: string[];
+  /** Execution stage from the frontmatter `stage:` field. Rules sharing a stage run in
+   *  parallel; stages run in ascending order with fail-fast gating between them. When absent,
+   *  the rule runs in a final implicit stage after all numbered stages. */
+  stage?: number;
 }
 
 export interface RuleResult {
@@ -39,6 +43,11 @@ export interface RuleResult {
   timedOut?: boolean;
   /** True if this rule was skipped because no changed files matched its `files:` patterns. */
   skipped?: boolean;
+  /** True if this rule never ran because an earlier stage tripped the gate. Distinct from
+   *  `skipped` (which means "ran the pre-flight, nothing to review"). Gated rules emit no
+   *  findings and no resolutions, so any prior findings they own are carried forward as
+   *  still-open by the cross-run reconciliation. */
+  gated?: boolean;
   /** Observability counters from the provider — text chars emitted and
    *  report_finding tool calls observed. The pretty output surfaces a warning
    *  when textChars is high but findingCount is 0 (model wrote findings as
@@ -155,6 +164,10 @@ export interface RevuConfig {
   output: "pretty" | "json" | "github" | "auto";
   outputFile?: string;
   failOn: Severity;
+  /** Severity at/above which a completed stage stops the run (later stages don't spawn).
+   *  Defaults to the `failOn` value when `--gate-on` is not supplied. Orthogonal to `failOn`:
+   *  `failOn` sets the exit code, `gateOn` sets whether later stages run. */
+  gateOn: Severity;
   force: boolean;
   /** Per-agent wall-clock timeout in ms. Default 300_000 (5 minutes). */
   timeoutMs: number;

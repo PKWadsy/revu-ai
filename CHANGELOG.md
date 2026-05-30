@@ -2,6 +2,23 @@
 
 All notable changes to `revu-ai` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project's pre-1.0 versioning treats minor bumps as breaking-change boundaries.
 
+## 0.4.0
+
+### Added
+
+- **Staged, fail-fast review.** Rule files may declare a `stage:` integer in their YAML
+  frontmatter. Rules sharing a stage run in parallel; stages run in ascending order. After
+  each stage, if any accumulated finding is at/above the gate threshold, later stages are
+  skipped (marked `gated` in the report) and spawn no agents.
+- `--gate-on <severity>` controls the gate; it falls back to `--fail-on` when omitted.
+  `--fail-on` still sets the exit code; `--gate-on` only controls whether later stages run.
+
+### Notes
+
+- Backwards compatible: a rule set with no `stage:` declarations runs as a single stage,
+  identical to prior behavior. Reports remain `schemaVersion: 3` (`gated` is an additive
+  optional field; the `github post` step tolerates it).
+
 ## 0.3.0 — 2026-05-24
 
 ### Breaking changes

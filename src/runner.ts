@@ -11,6 +11,7 @@ import type {
   Finding,
   RevuConfig,
   RunReport,
+  RuleFile,
   RuleResult,
   ReviewSummary,
   Severity,
@@ -40,6 +41,10 @@ export interface RunHooks {
   onSummary?: (summary: ReviewSummary) => void;
   /** Fires for each `report_check` call — incremental compliance evidence. */
   onCheck?: (check: Check) => void;
+  /** Fires when a stage begins, with its display label and how many rules it contains. */
+  onStageStart?: (label: string, ruleCount: number) => void;
+  /** Fires when a stage trips the gate, stopping the run. */
+  onGate?: (label: string, gatingFindingCount: number, threshold: Severity) => void;
 }
 
 export interface RunInputs {
@@ -105,128 +110,115 @@ export async function run(cwd: string, config: RevuConfig, hooks: RunHooks = {},
 
   const ruleResults: RuleResult[] = [];
 
+  // Runs a single rule end-to-end (pre-flight file filtering + provider) and returns its
+  // result. Pure w.r.t. ruleResults — the caller pushes and fires onRuleEnd.
+  const executeRule = async (rule: (typeof rules)[number]): Promise<RuleResult> => {
+    const priorForRule = priorByRule.get(rule.ruleId);
+    const ruleStart = Date.now();
+
+    if (rule.filePatterns !== undefined) {
+      if (rule.filePatterns.length === 0) {
+        return {
+          id: rule.ruleId, path: rule.relPath, ok: false,
+          durationMs: Date.now() - ruleStart, findingCount: 0, summaryCount: 0, checkCount: 0,
+          errorMessage: "files: pattern list is empty — add at least one glob pattern or remove the key",
+        };
+      }
+      let matchingFiles: string[];
+      try {
+        matchingFiles = micromatch(resolved.changedFiles, rule.filePatterns);
+      } catch (e) {
+        const msg = (e as Error)?.message ?? String(e);
+        return {
+          id: rule.ruleId, path: rule.relPath, ok: false,
+          durationMs: Date.now() - ruleStart, findingCount: 0, summaryCount: 0, checkCount: 0,
+          errorMessage: `invalid files: pattern — ${msg}`,
+        };
+      }
+      if (matchingFiles.length === 0) {
+        return {
+          id: rule.ruleId, path: rule.relPath, ok: true,
+          durationMs: 0, findingCount: 0, summaryCount: 0, checkCount: 0, skipped: true,
+        };
+      }
+    }
+
+    try {
+      const result = await provider.run({
+        ruleId: rule.ruleId,
+        rulesFilePath: rule.absPath,
+        rulesContent: rule.content,
+        reviewTarget: resolved.target,
+        repoRoot,
+        mcp: { url: sidecar.url, authToken: sidecar.authToken },
+        timeoutMs: config.timeoutMs,
+        ...(hooks.onActivity ? { onActivity: (a) => hooks.onActivity?.(rule.ruleId, a) } : {}),
+        ...(priorForRule && priorForRule.length > 0 ? { priorFindings: priorForRule } : {}),
+        ...(priorHeadSha ? { priorHeadSha } : {}),
+        ...(rule.filePatterns ? { filePatterns: rule.filePatterns } : {}),
+      });
+      return {
+        id: result.ruleId, path: rule.relPath, ok: result.ok, durationMs: result.durationMs,
+        findingCount: sidecar.aggregator.countFor(result.ruleId),
+        summaryCount: sidecar.aggregator.summaryCountFor(result.ruleId),
+        checkCount: sidecar.aggregator.checkCountFor(result.ruleId),
+        ...(result.errorMessage ? { errorMessage: result.errorMessage } : {}),
+        ...(result.timedOut ? { timedOut: true } : {}),
+        ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}),
+      };
+    } catch (e) {
+      const message = (e as Error)?.stack ?? (e as Error)?.message ?? String(e);
+      return {
+        id: rule.ruleId, path: rule.relPath, ok: false,
+        durationMs: Date.now() - ruleStart,
+        findingCount: sidecar.aggregator.countFor(rule.ruleId),
+        summaryCount: sidecar.aggregator.summaryCountFor(rule.ruleId),
+        checkCount: sidecar.aggregator.checkCountFor(rule.ruleId),
+        errorMessage: `unexpected error: ${message.split("\n")[0]}`,
+      };
+    }
+  };
+
+  const gateThreshold = SEVERITY_ORDER[config.gateOn];
+
   try {
-    await Promise.all(
-      rules.map((rule) =>
-        limit(async () => {
-          hooks.onRuleStart?.(rule.ruleId, rule.relPath);
-          const priorForRule = priorByRule.get(rule.ruleId);
-          const ruleStart = Date.now();
+    const groups = groupRulesByStage(rules);
+    let gated = false;
 
-          // If the rule declares a files: pattern list, decide whether to run, skip,
-          // or fail before spawning an agent.
-          //   • filePatterns === undefined  → no key in frontmatter → run against all files
-          //   • filePatterns is empty []    → key was present but empty (broken config) → fail
-          //   • micromatch throws           → invalid pattern syntax → fail
-          //   • no changed files match      → skip (nothing to review)
-          if (rule.filePatterns !== undefined) {
-            if (rule.filePatterns.length === 0) {
-              const failed: RuleResult = {
-                id: rule.ruleId,
-                path: rule.relPath,
-                ok: false,
-                durationMs: Date.now() - ruleStart,
-                findingCount: 0,
-                summaryCount: 0,
-                checkCount: 0,
-                errorMessage:
-                  "files: pattern list is empty — add at least one glob pattern or remove the key",
-              };
-              ruleResults.push(failed);
-              hooks.onRuleEnd?.(failed);
-              return;
-            }
+    for (const group of groups) {
+      if (gated) {
+        for (const rule of group.rules) {
+          const result: RuleResult = {
+            id: rule.ruleId, path: rule.relPath, ok: true,
+            durationMs: 0, findingCount: 0, summaryCount: 0, checkCount: 0, gated: true,
+          };
+          ruleResults.push(result);
+          hooks.onRuleEnd?.(result);
+        }
+        continue;
+      }
 
-            let matchingFiles: string[];
-            try {
-              matchingFiles = micromatch(resolved.changedFiles, rule.filePatterns);
-            } catch (e) {
-              const msg = (e as Error)?.message ?? String(e);
-              const failed: RuleResult = {
-                id: rule.ruleId,
-                path: rule.relPath,
-                ok: false,
-                durationMs: Date.now() - ruleStart,
-                findingCount: 0,
-                summaryCount: 0,
-                checkCount: 0,
-                errorMessage: `invalid files: pattern — ${msg}`,
-              };
-              ruleResults.push(failed);
-              hooks.onRuleEnd?.(failed);
-              return;
-            }
+      hooks.onStageStart?.(group.label, group.rules.length);
+      await Promise.all(
+        group.rules.map((rule) =>
+          limit(async () => {
+            hooks.onRuleStart?.(rule.ruleId, rule.relPath);
+            const result = await executeRule(rule);
+            ruleResults.push(result);
+            hooks.onRuleEnd?.(result);
+          }),
+        ),
+      );
 
-            if (matchingFiles.length === 0) {
-              const skipped: RuleResult = {
-                id: rule.ruleId,
-                path: rule.relPath,
-                ok: true,
-                durationMs: 0,
-                findingCount: 0,
-                summaryCount: 0,
-                checkCount: 0,
-                skipped: true,
-              };
-              ruleResults.push(skipped);
-              hooks.onRuleEnd?.(skipped);
-              return;
-            }
-          }
-
-          // Per-rule isolation: a provider that throws (bug, runtime
-          // error, anything we didn't anticipate) must not abort the
-          // whole run. Catch here, convert to an errored RuleResult, and
-          // let the other rules finish. The provider's own contract is
-          // already to return ReviewResult with `ok:false` on expected
-          // failures — this is the safety net for unexpected ones.
-          let ruleResult: RuleResult;
-          try {
-            const result = await provider.run({
-              ruleId: rule.ruleId,
-              rulesFilePath: rule.absPath,
-              rulesContent: rule.content,
-              reviewTarget: resolved.target,
-              repoRoot,
-              mcp: { url: sidecar.url, authToken: sidecar.authToken },
-              timeoutMs: config.timeoutMs,
-              ...(hooks.onActivity
-                ? { onActivity: (a) => hooks.onActivity?.(rule.ruleId, a) }
-                : {}),
-              ...(priorForRule && priorForRule.length > 0 ? { priorFindings: priorForRule } : {}),
-              ...(priorHeadSha ? { priorHeadSha } : {}),
-              ...(rule.filePatterns ? { filePatterns: rule.filePatterns } : {}),
-            });
-            ruleResult = {
-              id: result.ruleId,
-              path: rule.relPath,
-              ok: result.ok,
-              durationMs: result.durationMs,
-              findingCount: sidecar.aggregator.countFor(result.ruleId),
-              summaryCount: sidecar.aggregator.summaryCountFor(result.ruleId),
-              checkCount: sidecar.aggregator.checkCountFor(result.ruleId),
-              ...(result.errorMessage ? { errorMessage: result.errorMessage } : {}),
-              ...(result.timedOut ? { timedOut: true } : {}),
-              ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}),
-            };
-          } catch (e) {
-            const message = (e as Error)?.stack ?? (e as Error)?.message ?? String(e);
-            ruleResult = {
-              id: rule.ruleId,
-              path: rule.relPath,
-              ok: false,
-              durationMs: Date.now() - ruleStart,
-              findingCount: sidecar.aggregator.countFor(rule.ruleId),
-              summaryCount: sidecar.aggregator.summaryCountFor(rule.ruleId),
-              checkCount: sidecar.aggregator.checkCountFor(rule.ruleId),
-              errorMessage: `unexpected error: ${message.split("\n")[0]}`,
-            };
-          }
-          ruleResults.push(ruleResult);
-          hooks.onRuleEnd?.(ruleResult);
-        }),
-      ),
-    );
+      const maxSev = maxFindingSeverity(sidecar.aggregator.all());
+      if (maxSev !== undefined && maxSev >= gateThreshold) {
+        gated = true;
+        const gatingCount = sidecar.aggregator.all().filter(
+          (f) => SEVERITY_ORDER[f.severity] >= gateThreshold,
+        ).length;
+        hooks.onGate?.(group.label, gatingCount, config.gateOn);
+      }
+    }
   } finally {
     unsubscribeFindings();
     unsubscribeSummaries();
@@ -276,6 +268,48 @@ function checkSort(a: Check, b: Check): number {
   if (a.ruleId !== b.ruleId) return a.ruleId.localeCompare(b.ruleId);
   if (a.path !== b.path) return a.path.localeCompare(b.path);
   return (a.line ?? 0) - (b.line ?? 0);
+}
+
+interface StageGroup {
+  label: string;
+  rules: RuleFile[];
+}
+
+/**
+ * Group rules into ordered execution stages.
+ *  - Numbered stages run in ascending order, rules within a stage in parallel.
+ *  - Unstaged rules (no `stage:`) form a single final group that runs after all numbered stages.
+ *  - If NO rule declares a stage, the result is one group containing everything — byte-for-byte
+ *    today's single-pass behavior.
+ */
+function groupRulesByStage(rules: RuleFile[]): StageGroup[] {
+  const numbered = new Map<number, RuleFile[]>();
+  const unstaged: RuleFile[] = [];
+  for (const rule of rules) {
+    if (rule.stage === undefined) {
+      unstaged.push(rule);
+    } else {
+      const list = numbered.get(rule.stage);
+      if (list) list.push(rule);
+      else numbered.set(rule.stage, [rule]);
+    }
+  }
+  const groups: StageGroup[] = [...numbered.keys()]
+    .sort((a, b) => a - b)
+    .map((n) => ({ label: `stage ${n}`, rules: numbered.get(n)! }));
+  if (unstaged.length > 0) {
+    groups.push({ label: groups.length > 0 ? "unstaged" : "all", rules: unstaged });
+  }
+  return groups;
+}
+
+function maxFindingSeverity(findings: Finding[]): number | undefined {
+  let max: number | undefined;
+  for (const f of findings) {
+    const s = SEVERITY_ORDER[f.severity];
+    if (max === undefined || s > max) max = s;
+  }
+  return max;
 }
 
 export async function listRules(cwd: string, pattern: string): Promise<{ relPath: string; ruleId: string }[]> {
