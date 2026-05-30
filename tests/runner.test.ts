@@ -58,6 +58,57 @@ function makeMockProvider(
   });
 }
 
+/** A mock provider that records, in order, which ruleIds actually ran (i.e. weren't gated/skipped),
+ *  and reports the planned findings through the real MCP sidecar like makeMockProvider does. */
+function trackingProvider(
+  ran: string[],
+  plan: Record<string, Array<{ severity: string; path: string; line?: number; message: string }>>,
+): ReviewAgentFactory {
+  return (): ReviewAgent => ({
+    name: "mock-track",
+    async run(input: ReviewInput) {
+      ran.push(input.ruleId);
+      const start = Date.now();
+      const findings = plan[input.ruleId] ?? [];
+      const client = new Client({ name: "mock-agent", version: "0.0.1" });
+      const transport = new StreamableHTTPClientTransport(new URL(input.mcp.url), {
+        requestInit: { headers: { Authorization: `Bearer ${input.mcp.authToken}`, "X-Revu-Rule-Id": input.ruleId } },
+      });
+      try {
+        await client.connect(transport);
+        for (const f of findings) await client.callTool({ name: "report_finding", arguments: f });
+        await client.callTool({
+          name: "report_review_summary",
+          arguments: { outcome: findings.length > 0 ? "concerns" : "pass", checked: "mock", rationale: "mock" },
+        });
+      } finally {
+        await client.close();
+      }
+      return { ruleId: input.ruleId, ok: true, durationMs: Date.now() - start };
+    },
+  });
+}
+
+/** Build a full RevuConfig for the temp repo, overriding only the fields a test cares about.
+ *  Mirrors loadConfig's fallback: when a test overrides `failOn` but not `gateOn`, `gateOn`
+ *  follows `failOn` (the runner never re-derives this — loadConfig is the single source). */
+function baseConfig(over: Partial<import("../src/types.js").RevuConfig> = {}): import("../src/types.js").RevuConfig {
+  const merged: import("../src/types.js").RevuConfig = {
+    pattern: "**/*.revu.md",
+    harness: "mock",
+    workingTree: false,
+    staged: false,
+    output: "json",
+    failOn: "high",
+    gateOn: "high",
+    force: false,
+    timeoutMs: 60_000,
+    ...over,
+  };
+  if (over.gateOn === undefined) merged.gateOn = merged.failOn;
+  return merged;
+}
+
 let dir: string;
 
 beforeEach(() => {
@@ -103,6 +154,7 @@ describe("runner", () => {
       staged: false,
       output: "json",
       failOn: "high",
+      gateOn: "high",
       force: false,
       timeoutMs: 60_000,
     });
@@ -147,6 +199,7 @@ describe("runner", () => {
         staged: false,
         output: "json",
         failOn: "critical",
+        gateOn: "critical",
         force: false,
         timeoutMs: 60_000,
       });
@@ -205,6 +258,7 @@ describe("runner", () => {
         staged: false,
         output: "json",
         failOn: "critical",
+        gateOn: "critical",
         force: false,
         timeoutMs: 60_000,
       });
@@ -231,6 +285,7 @@ describe("runner", () => {
       staged: false,
       output: "json",
       failOn: "critical",
+      gateOn: "critical",
       force: false,
       timeoutMs: 60_000,
     });
@@ -315,6 +370,7 @@ describe("runner — priorReport flow", () => {
           staged: false,
           output: "json",
           failOn: "critical",
+          gateOn: "critical",
           force: false,
           timeoutMs: 60_000,
         },
@@ -391,6 +447,7 @@ describe("runner — filePatterns filtering", () => {
       staged: false,
       output: "json",
       failOn: "high",
+      gateOn: "high",
       force: false,
       timeoutMs: 60_000,
     });
@@ -425,6 +482,7 @@ describe("runner — filePatterns filtering", () => {
         staged: false,
         output: "json",
         failOn: "high",
+        gateOn: "high",
         force: false,
         timeoutMs: 60_000,
       });
@@ -435,5 +493,136 @@ describe("runner — filePatterns filtering", () => {
     } finally {
       unregisterHarness("mock-filter-empty");
     }
+  });
+});
+
+describe("runner — staging and gating", () => {
+  it("runs stages in ascending order and gates after a stage hits the threshold", async () => {
+    writeFileSync(join(dir, ".revu", "alpha.revu.md"), "---\nstage: 1\n---\n# alpha");
+    writeFileSync(join(dir, ".revu", "beta.revu.md"), "---\nstage: 2\n---\n# beta");
+    git(dir, "add", ".");
+    git(dir, "commit", "-m", "stage rules");
+
+    const ran: string[] = [];
+    unregisterHarness("mock");
+    registerHarness("mock", trackingProvider(ran, {
+      ".revu/alpha": [{ severity: "high", path: "src.ts", line: 1, message: "alpha-high" }],
+      ".revu/beta": [{ severity: "low", path: "src.ts", message: "beta-low" }],
+    }));
+
+    const { report, exitCode } = await run(dir, baseConfig({ failOn: "high", gateOn: "high" }));
+
+    expect(ran).toEqual([".revu/alpha"]);
+    const beta = report.rules.find((r) => r.id === ".revu/beta");
+    expect(beta?.gated).toBe(true);
+    expect(beta?.skipped).toBeUndefined();
+    expect(report.findings.some((f) => f.ruleId === ".revu/beta")).toBe(false);
+    expect(exitCode).toBe(1);
+  });
+
+  it("does NOT gate when no finding meets the gate threshold", async () => {
+    writeFileSync(join(dir, ".revu", "alpha.revu.md"), "---\nstage: 1\n---\n# alpha");
+    writeFileSync(join(dir, ".revu", "beta.revu.md"), "---\nstage: 2\n---\n# beta");
+    git(dir, "add", ".");
+    git(dir, "commit", "-m", "stage rules");
+
+    const ran: string[] = [];
+    unregisterHarness("mock");
+    registerHarness("mock", trackingProvider(ran, {
+      ".revu/alpha": [{ severity: "low", path: "src.ts", line: 1, message: "alpha-low" }],
+      ".revu/beta": [{ severity: "low", path: "src.ts", message: "beta-low" }],
+    }));
+
+    const { report } = await run(dir, baseConfig({ failOn: "low", gateOn: "high" }));
+
+    expect(ran.sort()).toEqual([".revu/alpha", ".revu/beta"]);
+    expect(report.rules.every((r) => !r.gated)).toBe(true);
+  });
+
+  it("gateOn falls back to failOn (low) and gates aggressively", async () => {
+    writeFileSync(join(dir, ".revu", "alpha.revu.md"), "---\nstage: 1\n---\n# alpha");
+    writeFileSync(join(dir, ".revu", "beta.revu.md"), "---\nstage: 2\n---\n# beta");
+    git(dir, "add", ".");
+    git(dir, "commit", "-m", "stage rules");
+
+    const ran: string[] = [];
+    unregisterHarness("mock");
+    registerHarness("mock", trackingProvider(ran, {
+      ".revu/alpha": [{ severity: "low", path: "src.ts", line: 1, message: "alpha-low" }],
+      ".revu/beta": [{ severity: "low", path: "src.ts", message: "beta-low" }],
+    }));
+
+    const { report } = await run(dir, baseConfig({ failOn: "low" }));
+
+    expect(ran).toEqual([".revu/alpha"]);
+    expect(report.rules.find((r) => r.id === ".revu/beta")?.gated).toBe(true);
+  });
+
+  it("treats an all-unstaged rule set as a single stage (backwards compatible)", async () => {
+    const ran: string[] = [];
+    unregisterHarness("mock");
+    registerHarness("mock", trackingProvider(ran, {
+      ".revu/alpha": [{ severity: "high", path: "src.ts", line: 1, message: "alpha-high" }],
+      ".revu/beta": [{ severity: "low", path: "src.ts", message: "beta-low" }],
+    }));
+
+    const { report } = await run(dir, baseConfig({ failOn: "high", gateOn: "high" }));
+
+    expect(ran.sort()).toEqual([".revu/alpha", ".revu/beta"]);
+    expect(report.rules.every((r) => !r.gated)).toBe(true);
+  });
+
+  it("runs unstaged rules in a final stage after numbered stages", async () => {
+    writeFileSync(join(dir, ".revu", "alpha.revu.md"), "---\nstage: 1\n---\n# alpha");
+    git(dir, "add", ".");
+    git(dir, "commit", "-m", "one staged one not");
+
+    const order: string[] = [];
+    unregisterHarness("mock");
+    registerHarness("mock", trackingProvider(order, {
+      ".revu/alpha": [],
+      ".revu/beta": [{ severity: "low", path: "src.ts", message: "beta-low" }],
+    }));
+
+    const { report } = await run(dir, baseConfig({ failOn: "high", gateOn: "high" }));
+
+    expect(order).toEqual([".revu/alpha", ".revu/beta"]);
+    expect(report.rules.find((r) => r.id === ".revu/beta")?.gated).toBeUndefined();
+  });
+
+  it("preserves a gated rule's prior findings (no implicit resolution)", async () => {
+    writeFileSync(join(dir, ".revu", "alpha.revu.md"), "---\nstage: 1\n---\n# alpha");
+    writeFileSync(join(dir, ".revu", "beta.revu.md"), "---\nstage: 2\n---\n# beta");
+    git(dir, "add", ".");
+    git(dir, "commit", "-m", "stage rules");
+
+    unregisterHarness("mock");
+    registerHarness("mock", trackingProvider([], {
+      ".revu/alpha": [{ severity: "high", path: "src.ts", line: 1, message: "alpha-high" }],
+      ".revu/beta": [{ severity: "low", path: "src.ts", message: "beta-low" }],
+    }));
+
+    const priorReport: import("../src/types.js").RunReport = {
+      schemaVersion: 3,
+      runId: "prev",
+      startedAt: new Date().toISOString(),
+      completedAt: new Date().toISOString(),
+      reviewTarget: {
+        mode: "ref-range", base: "origin/main", head: "HEAD",
+        baseSha: "0000000", headSha: "deadbee", changedFiles: ["src.ts"],
+        target: { mode: "ref-range", base: "origin/main", head: "HEAD" },
+      },
+      rules: [],
+      findings: [
+        { ruleId: ".revu/beta", severity: "medium", path: "src.ts", line: 1, message: "beta-prior", fingerprint: "beta-prior-fp" },
+      ],
+      resolutions: [],
+      summaries: [],
+      checks: [],
+    };
+
+    const { report } = await run(dir, baseConfig({ failOn: "high", gateOn: "high" }), {}, { priorReport });
+
+    expect(report.resolutions.some((r) => r.fingerprint === "beta-prior-fp")).toBe(false);
   });
 });

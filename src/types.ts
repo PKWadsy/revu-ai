@@ -43,6 +43,11 @@ export interface RuleResult {
   timedOut?: boolean;
   /** True if this rule was skipped because no changed files matched its `files:` patterns. */
   skipped?: boolean;
+  /** True if this rule never ran because an earlier stage tripped the gate. Distinct from
+   *  `skipped` (which means "ran the pre-flight, nothing to review"). Gated rules emit no
+   *  findings and no resolutions, so any prior findings they own are carried forward as
+   *  still-open by the cross-run reconciliation. */
+  gated?: boolean;
   /** Observability counters from the provider — text chars emitted and
    *  report_finding tool calls observed. The pretty output surfaces a warning
    *  when textChars is high but findingCount is 0 (model wrote findings as
