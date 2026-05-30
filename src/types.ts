@@ -16,6 +16,10 @@ export interface RuleFile {
   /** Glob patterns (repo-root-relative) specifying which changed files this rule applies to.
    *  Parsed from the YAML frontmatter `files:` field. When absent, the rule applies to all changed files. */
   filePatterns?: string[];
+  /** Execution stage from the frontmatter `stage:` field. Rules sharing a stage run in
+   *  parallel; stages run in ascending order with fail-fast gating between them. When absent,
+   *  the rule runs in a final implicit stage after all numbered stages. */
+  stage?: number;
 }
 
 export interface RuleResult {

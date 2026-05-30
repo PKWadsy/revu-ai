@@ -30,13 +30,19 @@ export async function discoverRules(repoRoot: string, pattern: string): Promise<
   return matches.map((rel): RuleFile => {
     const abs = resolve(repoRoot, rel);
     const rawContent = readFileSync(abs, "utf8");
-    const { content, filePatterns } = parseFrontmatter(rawContent);
+    let parsed: { content: string; filePatterns?: string[]; stage?: number };
+    try {
+      parsed = parseFrontmatter(rawContent);
+    } catch (e) {
+      throw new Error(`${rel}: ${(e as Error).message}`);
+    }
     return {
       ruleId: deriveRuleId(rel),
       absPath: abs,
       relPath: rel,
-      content,
-      ...(filePatterns !== undefined ? { filePatterns } : {}),
+      content: parsed.content,
+      ...(parsed.filePatterns !== undefined ? { filePatterns: parsed.filePatterns } : {}),
+      ...(parsed.stage !== undefined ? { stage: parsed.stage } : {}),
     };
   });
 }
@@ -138,7 +144,7 @@ function deriveRuleId(relPath: string): string {
  *   - `files:` present with one or more patterns → `filePatterns` is those
  *     patterns. If micromatch throws at match time the runner also fails the rule.
  */
-export function parseFrontmatter(rawContent: string): { content: string; filePatterns?: string[] } {
+export function parseFrontmatter(rawContent: string): { content: string; filePatterns?: string[]; stage?: number } {
   // Frontmatter must start at the very beginning of the file.
   const fmMatch = rawContent.match(/^---[ \t]*\r?\n([\s\S]*?)\n---[ \t]*(\r?\n|$)/);
   if (!fmMatch) return { content: rawContent };
@@ -146,7 +152,12 @@ export function parseFrontmatter(rawContent: string): { content: string; filePat
   const frontmatterBlock = fmMatch[1] ?? "";
   const body = rawContent.slice(fmMatch[0].length);
   const filePatterns = parseFrontmatterFiles(frontmatterBlock);
-  return { content: body, filePatterns };
+  const stage = parseFrontmatterStage(frontmatterBlock);
+  return {
+    content: body,
+    ...(filePatterns !== undefined ? { filePatterns } : {}),
+    ...(stage !== undefined ? { stage } : {}),
+  };
 }
 
 function parseFrontmatterFiles(frontmatter: string): string[] | undefined {
@@ -185,6 +196,24 @@ function parseFrontmatterFiles(frontmatter: string): string[] | undefined {
 
   // files: key is present but nothing recognisable follows (e.g. bare `files:` line).
   return [];
+}
+
+/**
+ * Parse the optional `stage:` frontmatter key.
+ *  - No `stage:` key → returns `undefined` (rule runs in the final implicit stage).
+ *  - A positive integer → returns that number.
+ *  - Anything else (non-integer, ≤ 0, empty) → throws. A malformed stage makes the
+ *    whole run's ordering undefined, so we surface it loudly rather than guess.
+ */
+function parseFrontmatterStage(frontmatter: string): number | undefined {
+  const m = frontmatter.match(/^stage:\s*(.*)$/m);
+  if (!m) return undefined;
+  const raw = (m[1] ?? "").trim().replace(/^["']|["']$/g, "");
+  const n = Number(raw);
+  if (raw === "" || !Number.isInteger(n) || n < 1) {
+    throw new Error(`Invalid stage: "${raw}" — stage must be a positive integer (1, 2, 3, …)`);
+  }
+  return n;
 }
 
 export function _testing_deriveRuleId(rel: string): string {

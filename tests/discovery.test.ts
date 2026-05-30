@@ -212,6 +212,33 @@ describe("parseFrontmatter", () => {
   });
 });
 
+describe("parseFrontmatter — stage:", () => {
+  it("parses an integer stage", () => {
+    const { stage } = parseFrontmatter("---\nstage: 2\n---\n# body\n");
+    expect(stage).toBe(2);
+  });
+
+  it("parses stage alongside files:", () => {
+    const { stage, filePatterns } = parseFrontmatter('---\nstage: 1\nfiles: "**/*.rs"\n---\n# body\n');
+    expect(stage).toBe(1);
+    expect(filePatterns).toEqual(["**/*.rs"]);
+  });
+
+  it("returns undefined stage when the key is absent", () => {
+    const { stage } = parseFrontmatter("---\nfiles: \"**/*.ts\"\n---\n# body\n");
+    expect(stage).toBeUndefined();
+  });
+
+  it("returns undefined stage when there is no frontmatter", () => {
+    const { stage } = parseFrontmatter("# just a heading\n");
+    expect(stage).toBeUndefined();
+  });
+
+  it.each(["abc", "1.5", "-1", "0", ""])("throws on invalid stage %p", (bad) => {
+    expect(() => parseFrontmatter(`---\nstage: ${bad}\n---\n# body\n`)).toThrow(/stage/i);
+  });
+});
+
 describe("discoverRules — filePatterns from frontmatter", () => {
   let fmDir: string;
 
