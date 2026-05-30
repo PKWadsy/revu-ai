@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   detectIncompleteReviews,
   detectPossiblySilencedRules,
+  detectGatedRules,
   SILENCED_TEXT_THRESHOLD,
 } from "../src/output/pretty.js";
 import type { RunReport, RuleResult } from "../src/types.js";
@@ -149,6 +150,24 @@ describe("detectPossiblySilencedRules", () => {
     ]);
     expect(detectPossiblySilencedRules(report)).toEqual([]);
   });
+
+  it("does not flag gated rules (they never ran, so 'lost findings' isn't the story)", () => {
+    const report = makeReport([
+      {
+        id: ".revu/gated",
+        path: ".revu/gated.revu.md",
+        ok: true,
+        durationMs: 0,
+        findingCount: 0,
+        summaryCount: 0,
+        checkCount: 0,
+        gated: true,
+        // A defensive provider could still attach diagnostics; gating must win.
+        diagnostics: { textChars: SILENCED_TEXT_THRESHOLD * 10, findingToolCalls: 0 },
+      },
+    ]);
+    expect(detectPossiblySilencedRules(report)).toEqual([]);
+  });
 });
 
 describe("detectIncompleteReviews", () => {
@@ -225,5 +244,39 @@ describe("detectIncompleteReviews", () => {
       { id: "c", path: "c.revu.md", ok: true, durationMs: 1, findingCount: 0, summaryCount: 1, checkCount: 3 },
     ]);
     expect(detectIncompleteReviews(report).map((r) => r.id)).toEqual(["a", "b"]);
+  });
+
+  it("does not flag gated rules as incomplete — they never ran because an earlier stage tripped the gate", () => {
+    const report = makeReport([
+      {
+        id: ".revu/gated",
+        path: ".revu/gated.revu.md",
+        ok: true,
+        durationMs: 0,
+        findingCount: 0,
+        summaryCount: 0,
+        checkCount: 0,
+        gated: true,
+      },
+    ]);
+    expect(detectIncompleteReviews(report)).toEqual([]);
+  });
+});
+
+describe("detectGatedRules", () => {
+  it("returns the rules that did not run because an earlier stage tripped the gate", () => {
+    const report = makeReport([
+      { id: ".revu/ran", path: ".revu/ran.revu.md", ok: true, durationMs: 10, findingCount: 1, summaryCount: 1, checkCount: 0 },
+      { id: ".revu/gated-a", path: ".revu/gated-a.revu.md", ok: true, durationMs: 0, findingCount: 0, summaryCount: 0, checkCount: 0, gated: true },
+      { id: ".revu/gated-b", path: ".revu/gated-b.revu.md", ok: true, durationMs: 0, findingCount: 0, summaryCount: 0, checkCount: 0, gated: true },
+    ]);
+    expect(detectGatedRules(report).map((r) => r.id)).toEqual([".revu/gated-a", ".revu/gated-b"]);
+  });
+
+  it("returns an empty list when nothing was gated", () => {
+    const report = makeReport([
+      { id: ".revu/ran", path: ".revu/ran.revu.md", ok: true, durationMs: 10, findingCount: 0, summaryCount: 1, checkCount: 0 },
+    ]);
+    expect(detectGatedRules(report)).toEqual([]);
   });
 });
