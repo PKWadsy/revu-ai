@@ -195,6 +195,14 @@ program
       const { report, exitCode } = await run(cwd, cfg, {
         onRuleStart: (id) =>
           process.stderr.write(`${paint("cyan", "▶")} ${paint("bold", id)}\n`),
+        onStageStart: (label, count) =>
+          process.stderr.write(
+            `${paint("magenta", "▣")} ${paint("bold", label)} ${paint("dim", `· ${count} rule${count === 1 ? "" : "s"}`)}\n`,
+          ),
+        onGate: (label, count, threshold) =>
+          process.stderr.write(
+            `${paint("yellow", paint("bold", "⛔ gated"))} ${paint("dim", `after ${label} — ${count} finding(s) ≥ ${threshold}; skipping later stages`)}\n`,
+          ),
         onActivity: showProgress
           ? (id, a) => {
               if (
