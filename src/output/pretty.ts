@@ -82,6 +82,17 @@ export function emitPretty(report: RunReport): void {
     lines.push("");
   }
 
+  const gated = detectGatedRules(report);
+  if (gated.length > 0) {
+    lines.push(paint("cyan", `⏭ ${gated.length} rule(s) did not run — an earlier stage tripped the gate (fail-fast).`));
+    lines.push(paint("dim", "  These were not reviewed; their status is unknown, not clean. Re-run after"));
+    lines.push(paint("dim", "  fixing the gating findings to exercise the remaining stages."));
+    for (const r of gated) {
+      lines.push(paint("dim", `    ${r.id}  (skipped — gated)`));
+    }
+    lines.push("");
+  }
+
   const incomplete = detectIncompleteReviews(report);
   if (incomplete.length > 0) {
     lines.push(paint("yellow", `⚠ ${incomplete.length} rule(s) did not call \`mcp__revu__report_review_summary\` — likely incomplete review.`));
@@ -183,9 +194,19 @@ export function detectIncompleteReviews(report: RunReport): Array<{ id: string }
         r.ok &&
         !r.timedOut &&
         !r.skipped &&
+        !r.gated &&
         (r.summaryCount ?? 0) === 0,
     )
     .map((r) => ({ id: r.id }));
+}
+
+/** Rules that never ran because an earlier stage tripped the gate. The runner
+ *  stamps these with `gated: true` and emits no findings/summary for them, so
+ *  without this they'd masquerade as clean (zero findings) or incomplete (zero
+ *  summaries). They're not a problem — they're expected fail-fast behaviour —
+ *  so the pretty output gives them their own neutral banner instead. */
+export function detectGatedRules(report: RunReport): Array<{ id: string }> {
+  return report.rules.filter((r) => r.gated).map((r) => ({ id: r.id }));
 }
 
 /** Rules where the agent emitted substantial assistant prose but reported no
@@ -208,6 +229,7 @@ export function detectPossiblySilencedRules(
         r.ok &&
         !r.timedOut &&
         !r.skipped &&
+        !r.gated &&
         r.findingCount === 0 &&
         (r.summaryCount ?? 0) === 0 &&
         r.diagnostics !== undefined &&

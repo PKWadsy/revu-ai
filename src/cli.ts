@@ -261,6 +261,10 @@ program
             status = `${paint("yellow", "⏱ timed out")}${paint("dim", count)}`;
           } else if (!r.ok) {
             status = `${paint("red", "✗ error:")} ${paint("red", r.errorMessage ?? "?")}`;
+          } else if (r.gated) {
+            status = paint("cyan", "⏭ skipped (gated)");
+          } else if (r.skipped) {
+            status = paint("dim", "⏭ skipped (no matching files)");
           } else if (r.findingCount === 0) {
             status = paint("green", "✓ clean");
           } else {

@@ -2,6 +2,19 @@
 
 All notable changes to `revu-ai` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project's pre-1.0 versioning treats minor bumps as breaking-change boundaries.
 
+## 0.4.1
+
+### Fixed
+
+- **Gated rules are no longer reported as clean or incomplete.** When a stage tripped the
+  gate, the later (`gated`) rules were rendered as `✓ clean` in the live progress and
+  falsely flagged by the "did not call `report_review_summary` — likely incomplete review"
+  warning, even though they never ran. The pretty output now shows a dedicated
+  `⏭ N rule(s) did not run — an earlier stage tripped the gate` banner, the
+  incomplete-review and possibly-silenced detectors skip `gated` rules, and the live
+  per-rule status prints `⏭ skipped (gated)`. Pre-flight file-filtered rules likewise now
+  print `⏭ skipped (no matching files)` instead of `✓ clean`.
+
 ## 0.4.0
 
 ### Added
