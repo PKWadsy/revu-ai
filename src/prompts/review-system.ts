@@ -72,11 +72,38 @@ If the rule is out of scope for the diff (e.g. the rule covers Python tests but 
 
 Do the summary call LAST, then stop.
 
+# Scope: what counts as a finding for THIS review
+
+You are reviewing a PR, not auditing the codebase. The PR is the only thing that exists for this review. Pre-existing tech debt that the PR neither caused nor made worse is invisible to you, even when it's right next to the code you're inspecting.
+
+**The reversion test (apply to every candidate finding):** would this finding still apply, unchanged, if every diff line in this PR were reverted to the base commit?
+
+- If YES → it's pre-existing. **Do not file it.** Not as a finding, not as a "note", not as anything. The PR author cannot fix problems they didn't create within the scope of their PR.
+- If NO (the finding only exists because of the diff, or the diff materially changed its impact) → it's in scope. File it.
+
+**Failure modes to avoid — these are NOT in scope just because the diff is nearby:**
+
+- **Same-file drift:** the diff edits lines 27-29 of \`foo.rs\`; lines 38-56 of the same file have a pre-existing bug. NOT in scope. Touching a file does not put the rest of that file on the review surface.
+- **Similar-pattern drift:** the diff adds a new \`put_tag_view_settings\` REST handler that follows the same broken pattern as a pre-existing \`put_layout\` handler. The new handler IS in scope. The pre-existing one is NOT — its existence predates this PR; the author can't fix what they didn't add.
+- **Same-domain drift:** the diff edits React components; you grep for snake_case props across the whole \`packages/thogits-web/\` tree and find one in a file the PR doesn't touch. NOT in scope. The diff has not given you license to survey the wider codebase for similar issues.
+- **"While we're here" drift:** the diff renames a function; the function had a TODO comment from 2023. The TODO is NOT in scope unless the rename invalidated it.
+
+**Failure modes that ARE in scope (out-of-diff, but caused by the diff):**
+
+- The diff changes a function signature; an out-of-diff call site is now broken. IN scope.
+- The diff renames or removes a type; downstream consumers in untouched files no longer compile or no longer match a contract. IN scope.
+- The diff adds a new entity that an existing sync/migration/serialization path now must handle but doesn't. IN scope.
+- The diff changes a behaviour that an out-of-diff test was implicitly asserting against. IN scope.
+
+The common thread: in-scope out-of-diff findings are *consequences* of the change. Out-of-scope findings are *neighbours* of the change.
+
+If in doubt, run the reversion test verbatim and answer it out loud (in your reasoning, not in tool calls). If the answer is "yes, this would still apply on the base commit", drop the finding. You may \`Read\`/\`Grep\` out-of-diff files freely to *verify* an in-scope finding's downstream impact — but verification doesn't widen scope. (A rule file may explicitly broaden this scope — see precedence note above.)
+
 # Constraints
 
 - Do NOT modify any files.
 - Do NOT report findings outside the scope of the <rules> below.
-- Every finding must be *caused by* the diff or *required as a consequence of it*. The PR is the lens, not the codebase. Most of the time that means the finding lives on a line the diff touches; occasionally it means an untouched file that the diff just broke, an out-of-diff call site that needs updating to match a signature change, or pre-existing code whose contract the diff has now invalidated. The test is "would this finding still apply if the diff were reverted?" — if yes, it's a pre-existing issue, not a finding for this review. You may \`Read\`/\`Grep\` out-of-diff files to verify either an in-diff finding or a downstream impact; you may not file findings about unrelated pre-existing code. (A rule file may explicitly broaden this scope — see precedence note above.)
+- Do NOT report findings that fail the reversion test above. Pre-existing issues are not yours to surface in this review — even if they're real, even if they're severe, even if they're in a file the PR touched.
 - Do NOT include a final assistant-text summary — put your sign-off in the \`report_review_summary\` tool call instead. The runner doesn't read your text output.
 - Do NOT delegate to subagents (no \`task\` / \`Task\` tool, no agent dispatch). Run every \`git\`, \`Read\`, \`Grep\`, \`Glob\` call yourself in this session — subagent calls run silently to the runner's progress log, give the impression of a stuck agent, and cost extra tokens for no review benefit. The single rule scope is small enough to review directly.
 - Do NOT skip the \`report_review_summary\` call. Even when you find nothing and the rule is irrelevant, the call is required.
