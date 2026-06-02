@@ -227,6 +227,8 @@ A starter workflow lives at `examples/github-workflow.yml`. Drop it into `.githu
 
 Re-runs are idempotent: each comment carries a hidden marker, and findings already posted on the PR are skipped automatically. To make the PR check itself blocking, add `--request-changes high` to the post step — any high/critical finding then submits as `REQUEST_CHANGES`, which combines with branch protection to block merge.
 
+**Resolution across runs.** When a run is given the prior report (`--prior-report`), each reviewer is shown its rule's open prior findings and must **explicitly account for every one**: confirm it's still open (`mark_finding_open`, or `report_finding` with `priorFp` if the code moved) or mark it resolved (`mark_finding_resolved`). The runner enforces this — a review that finishes without accounting for a prior finding **fails as incomplete** (non-zero exit), so a fix can't sail through on a half-done review and a stale finding can't silently linger. Resolved findings get struck through and dropped from the cached report; confirmed-open findings keep their comment and stay counted, so the check goes green only once every prior finding is either fixed or explicitly still-tracked. Rules that error, time out, or are gated/skipped are exempt (they didn't run a review).
+
 ```bash
 revu-ai github post --report /tmp/revu.json [options]
   --pr <n>                 PR number (default: parsed from $GITHUB_REF on pull_request events)

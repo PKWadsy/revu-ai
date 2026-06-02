@@ -9,6 +9,8 @@ export class FindingsAggregator {
   private resolutionListeners = new Set<(r: Resolution) => void>();
   private summaryByRule = new Map<string, ReviewSummary>();
   private summaryListeners = new Set<(s: ReviewSummary) => void>();
+  /** ruleId -> set of prior fingerprints the agent explicitly confirmed still-open. */
+  private openByRule = new Map<string, Set<string>>();
   private checksByRule = new Map<string, Check[]>();
   private checkDedupKeys = new Set<string>();
   private checkListeners = new Set<(c: Check) => void>();
@@ -63,12 +65,42 @@ export class FindingsAggregator {
     return true;
   }
 
+  /** Record that a prior finding is still open at the same location. Idempotent per fingerprint. */
+  markOpen(ruleId: string, fingerprint: string): boolean {
+    let set = this.openByRule.get(ruleId);
+    if (!set) {
+      set = new Set();
+      this.openByRule.set(ruleId, set);
+    }
+    if (set.has(fingerprint)) return false;
+    set.add(fingerprint);
+    return true;
+  }
+
   countFor(ruleId: string): number {
     return this.byRule.get(ruleId)?.length ?? 0;
   }
 
+  findingsFor(ruleId: string): Finding[] {
+    return this.byRule.get(ruleId) ?? [];
+  }
+
   resolutionsFor(ruleId: string): Resolution[] {
     return this.resolutionsByRule.get(ruleId) ?? [];
+  }
+
+  /** Fingerprints the agent explicitly confirmed still-open for this rule. */
+  openFor(ruleId: string): string[] {
+    return [...(this.openByRule.get(ruleId) ?? [])];
+  }
+
+  /** Every (ruleId, fingerprint) the agents confirmed still-open this run. */
+  allOpen(): { ruleId: string; fingerprint: string }[] {
+    const out: { ruleId: string; fingerprint: string }[] = [];
+    for (const [ruleId, set] of this.openByRule) {
+      for (const fingerprint of set) out.push({ ruleId, fingerprint });
+    }
+    return out;
   }
 
   /** Record a review summary. Only the first call per ruleId is kept — subsequent

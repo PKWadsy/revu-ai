@@ -48,10 +48,24 @@ export const MarkResolvedShape = {
 export const MarkResolvedObject = z.object(MarkResolvedShape);
 export type MarkResolvedInput = z.infer<typeof MarkResolvedObject>;
 
-export const MARK_RESOLVED_DESCRIPTION = `Mark a previously-reported finding as resolved.
-Use this when reviewing prior findings provided in your system prompt: if the new commits in this PR have addressed an issue you flagged on a previous run, call this tool with the prior finding's fingerprint.
-Do NOT use this tool for findings that are still open at the same location — just stay silent and the runner will keep them open.
-Do NOT use this tool for findings that have moved to a new location — instead emit a fresh \`report_finding\` with the prior fingerprint passed via \`priorFp\`.`;
+export const MARK_RESOLVED_DESCRIPTION = `Mark a previously-reported finding as RESOLVED — one of the two ways to account for a prior finding.
+Use this when the current changes have addressed an issue you flagged on a previous run: pass the prior finding's fingerprint and a reason — \`fixed\` (the new commits address it) or \`stale\` (the rule's premise no longer holds: file deleted, etc.). The runner strikes the existing PR comment through.
+This is REQUIRED accounting, not optional: every prior finding listed in your system prompt must be either resolved (this tool) or confirmed still-open (\`mark_finding_open\`, or \`report_finding\` with \`priorFp\` if it moved). A prior finding you leave untouched makes the whole review INCOMPLETE and it will be rejected.`;
+
+export const MarkOpenShape = {
+  fingerprint: z
+    .string()
+    .min(1)
+    .describe("The fingerprint of the prior finding you are confirming is STILL open and unaddressed."),
+} as const;
+
+export const MarkOpenObject = z.object(MarkOpenShape);
+export type MarkOpenInput = z.infer<typeof MarkOpenObject>;
+
+export const MARK_OPEN_DESCRIPTION = `Confirm that a previously-reported finding is STILL OPEN and unaddressed — one of the two ways to account for a prior finding.
+Use this for each prior finding (listed in your system prompt) whose issue the current changes have NOT fixed and whose location is unchanged. It keeps the existing PR comment in place (no duplicate is posted) and keeps the finding counted as open.
+If the finding is still open but the code MOVED to a different line, use \`report_finding\` with \`priorFp\` set to the prior fingerprint instead (so the comment can be repointed). If the finding has been fixed or no longer applies, use \`mark_finding_resolved\` instead.
+Accounting for EVERY prior finding (open or resolved) is REQUIRED — a review that leaves any prior finding untouched is rejected as incomplete, the same as a crashed review.`;
 
 export const ReportCheckShape = {
   path: z

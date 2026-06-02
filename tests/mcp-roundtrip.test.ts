@@ -103,6 +103,23 @@ describe("MCP sidecar roundtrip", () => {
     }
   });
 
+  it("records a still-open confirmation via mark_finding_open", async () => {
+    const sidecar = await startSidecar({ repoRoot: process.cwd() });
+    const { client, transport } = clientFor(sidecar.url, sidecar.authToken, "rule-open");
+    try {
+      await client.connect(transport);
+      await client.callTool({
+        name: "mark_finding_open",
+        arguments: { fingerprint: "still-here" },
+      });
+      expect(sidecar.aggregator.openFor("rule-open")).toEqual(["still-here"]);
+      expect(sidecar.aggregator.allOpen()).toEqual([{ ruleId: "rule-open", fingerprint: "still-here" }]);
+    } finally {
+      await client.close();
+      await sidecar.shutdown();
+    }
+  });
+
   it("defaults mark_finding_resolved reason to `fixed` when omitted", async () => {
     const sidecar = await startSidecar({ repoRoot: process.cwd() });
     const { client, transport } = clientFor(sidecar.url, sidecar.authToken, "rule-z2");

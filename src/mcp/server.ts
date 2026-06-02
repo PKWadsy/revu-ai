@@ -14,6 +14,8 @@ import {
   REPORT_FINDING_DESCRIPTION,
   MarkResolvedShape,
   MARK_RESOLVED_DESCRIPTION,
+  MarkOpenShape,
+  MARK_OPEN_DESCRIPTION,
   ReportReviewSummaryShape,
   REPORT_REVIEW_SUMMARY_DESCRIPTION,
   ReportCheckShape,
@@ -22,6 +24,7 @@ import {
   WRITE_RULE_FILE_DESCRIPTION,
   type ReportFindingInput,
   type MarkResolvedInput,
+  type MarkOpenInput,
   type ReportReviewSummaryInput,
   type ReportCheckInput,
   type WriteRuleFileInput,
@@ -187,6 +190,25 @@ function buildMcpServer(ruleId: string, ctx: HandlerCtx): McpServer {
           {
             type: "text",
             text: `Recorded resolution for ${args.fingerprint} (${args.reason ?? "fixed"}).`,
+          },
+        ],
+      };
+    },
+  );
+
+  server.registerTool(
+    "mark_finding_open",
+    {
+      description: MARK_OPEN_DESCRIPTION,
+      inputSchema: MarkOpenShape,
+    },
+    async (args: MarkOpenInput) => {
+      ctx.aggregator.markOpen(ruleId, args.fingerprint);
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Confirmed ${args.fingerprint} is still open.`,
           },
         ],
       };
