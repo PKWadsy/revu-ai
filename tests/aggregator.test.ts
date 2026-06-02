@@ -132,6 +132,27 @@ describe("FindingsAggregator", () => {
     });
   });
 
+  describe("still-open acknowledgements", () => {
+    it("records open confirmations per rule and dedupes by fingerprint", () => {
+      const agg = new FindingsAggregator();
+      expect(agg.markOpen("r1", "fp-a")).toBe(true);
+      expect(agg.markOpen("r1", "fp-a")).toBe(false); // dedup
+      expect(agg.markOpen("r1", "fp-b")).toBe(true);
+      expect(agg.openFor("r1").sort()).toEqual(["fp-a", "fp-b"]);
+      expect(agg.openFor("nope")).toEqual([]);
+    });
+
+    it("scopes open confirmations per rule and exposes them via allOpen()", () => {
+      const agg = new FindingsAggregator();
+      agg.markOpen("r1", "fp-a");
+      agg.markOpen("r2", "fp-a"); // same fp, different rule → distinct
+      expect(agg.allOpen().sort((a, b) => a.ruleId.localeCompare(b.ruleId))).toEqual([
+        { ruleId: "r1", fingerprint: "fp-a" },
+        { ruleId: "r2", fingerprint: "fp-a" },
+      ]);
+    });
+  });
+
   describe("compliance checks", () => {
     it("records and counts checks per rule", () => {
       const agg = new FindingsAggregator();

@@ -63,8 +63,8 @@ Don't fabricate checks. Each call should reflect something you actually looked a
 
 Before stopping, you MUST call \`mcp__revu__report_review_summary\` EXACTLY ONCE as your final action. This is non-negotiable: it is the runner's only way to distinguish a real "I reviewed this and it's clean" from "the agent silently exited / never reached the MCP / wrote findings as prose instead of tool calls". A review that ends without this call is flagged as a possibly-incomplete review.
 
-Call it after all your \`report_finding\`, \`mark_finding_resolved\`, and \`report_check\` calls. Pass:
-  - outcome: "pass" if you reported zero findings via \`report_finding\` for this rule; "concerns" if you reported one or more. (Resolved prior findings and recorded checks don't change the outcome — only newly reported findings flip it to "concerns".)
+Call it after all your \`report_finding\`, \`mark_finding_open\`, \`mark_finding_resolved\`, and \`report_check\` calls — and only once you have accounted for every prior finding listed below. Pass:
+  - outcome: "pass" if you reported zero findings via \`report_finding\` for this rule; "concerns" if you reported one or more. (Confirming a prior finding still-open, resolving one, and recorded checks don't by themselves change the outcome — only newly reported findings flip it to "concerns". A prior finding you confirm still-open via \`mark_finding_open\` is still an open problem, so "concerns" is appropriate when any remain.)
   - checked: a concrete description of what you actually examined to reach your conclusion. Name specific files, functions, or behaviours — not generic phrases like "the diff" or "the changes". Good: "src/runner.ts lines 95-160: the new filePatterns guard branch and its three failure paths; plus the corresponding test cases in tests/runner.test.ts." Bad: "I looked at the changes."
   - rationale: 1-3 sentences tying what you checked to why the outcome holds. For "pass", state which aspect of the rule the code satisfies and on what evidence — not just "no issues found". For "concerns", summarise any context not captured in the individual findings.
 
@@ -129,18 +129,20 @@ function renderPriorFindingsBlock(args: {
   }));
 
   return `
-# Previously reported findings (this rule)
+# Previously reported findings (this rule) — YOU MUST ACCOUNT FOR EVERY ONE
 
 A prior run of THIS rule, against commit \`${oldSha}\`, reported the findings below. The current target is ${headHint}. Use \`git diff ${oldSha}..${args.reviewTarget.mode === "ref-range" ? args.reviewTarget.head : "HEAD"}\` (or any narrower diff) to see what's changed since then.
 
-For EACH prior finding, decide:
+**This is a hard requirement.** For EACH prior finding listed, you MUST take exactly one of the explicit actions below. Staying silent on a prior finding is NOT an option — a prior finding you neither confirm nor resolve makes your review INCOMPLETE, and the runner REJECTS the whole review for this rule (it counts as a failed review, exactly like crashing). Go through the list one at a time and, for each, actually look at the current code before deciding:
 
-- **Resolved** — the new commits address the issue (offending code removed, fixed, or made acceptable). Call \`mcp__revu__mark_finding_resolved\` with the prior \`fingerprint\` and \`reason="fixed"\`.
-- **No longer applicable** — the file was deleted, the rule's premise no longer holds, etc. Call \`mcp__revu__mark_finding_resolved\` with \`reason="stale"\`.
-- **Still open at the same location** — DO NOTHING. The runner keeps the prior open status; do NOT re-emit a \`report_finding\` for it.
-- **Still open but at a different location** (line moved, code shifted) — call \`mcp__revu__report_finding\` for the NEW location with \`priorFp\` set to the prior fingerprint.
+- **Still a problem, same location** → call \`mcp__revu__mark_finding_open\` with the prior \`fingerprint\`. (Keeps the existing comment; no duplicate is posted.)
+- **Still a problem, but the code moved** (line shifted / relocated) → call \`mcp__revu__report_finding\` at the NEW location with \`priorFp\` set to the prior fingerprint.
+- **Fixed** — the current changes address it → call \`mcp__revu__mark_finding_resolved\` with the prior \`fingerprint\` and \`reason="fixed"\`.
+- **No longer applicable** — file deleted, the rule's premise no longer holds → call \`mcp__revu__mark_finding_resolved\` with the prior \`fingerprint\` and \`reason="stale"\`.
 
-Then, additionally, scan the diff for GENUINELY new findings (not in the prior list) and \`report_finding\` for those with \`priorFp\` unset.
+Do NOT skip any, and do NOT guess "probably still fine" — inspect the relevant code so your call is evidence-based. The whole point of these calls is to PROVE you re-examined every prior finding against the current code. The runner cross-checks: any prior fingerprint with no \`mark_finding_open\` / \`mark_finding_resolved\` / \`report_finding(priorFp)\` is unaccounted, and the review fails.
+
+Then, separately, scan the diff for GENUINELY new problems (not in the prior list) and \`report_finding\` for those with \`priorFp\` unset.
 
 ## Prior findings JSON
 

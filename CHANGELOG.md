@@ -2,6 +2,42 @@
 
 All notable changes to `revu-ai` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project's pre-1.0 versioning treats minor bumps as breaking-change boundaries.
 
+## 0.5.0
+
+### Fixed
+
+- **Reviews stop "failing forever" after a fix — and now prove they re-checked every prior
+  finding.** Previously a prior finding only cleared if the reviewer agent happened to call
+  `mark_finding_resolved`, and a still-open finding was signalled by staying silent. Fast /
+  non-reasoning models routinely did neither reliably: fixed findings kept their PR comments
+  open and the next run was re-primed with the stale finding, so the review never went green
+  even after the issue was fixed. Prior-finding handling is now **explicit and enforced**:
+  for every prior finding the agent must take exactly one accounting action, and a review
+  that leaves any prior finding untouched **fails** as incomplete (so a coding agent can't
+  merge past findings the reviewer never re-examined).
+
+### Added
+
+- **`mark_finding_open` MCP tool.** The agent calls it to confirm a prior finding is still
+  open at the same location — the explicit counterpart to `mark_finding_resolved`. Confirmed-
+  open findings keep their existing PR comment (no duplicate is posted) and are re-injected
+  into the run report, so the exit code and carried-forward cache reflect that the issue
+  persists. A still-open finding that *moved* is re-reported via `report_finding` with
+  `priorFp` set, exactly as before.
+- **Prior-finding accounting enforcement in the runner.** After a rule's agent runs cleanly,
+  the runner checks that every prior finding it was given was accounted for — confirmed open
+  (`mark_finding_open` / `report_finding` with `priorFp`) or resolved (`mark_finding_resolved`).
+  Any unaccounted prior fails the rule with an explicit error naming the fingerprints, which
+  forces a non-zero exit. Rules that error, time out, are gated, or are skipped are exempt
+  (they didn't run a review to hold to the contract).
+
+### Changed
+
+- The prior-findings system prompt is rewritten to state the requirement loudly: every prior
+  finding must be explicitly marked still-open or resolved, and silence now fails the review
+  rather than being interpreted as "fixed". `mark_finding_resolved`'s description was updated
+  to frame it as one of the two required accounting actions.
+
 ## 0.4.2
 
 ### Added

@@ -110,6 +110,23 @@ export async function run(cwd: string, config: RevuConfig, hooks: RunHooks = {},
 
   const ruleResults: RuleResult[] = [];
 
+  // A prior finding is "accounted for" this run when its rule explicitly confirmed it
+  // still-open (mark_finding_open, or a report_finding carrying its fingerprint via `priorFp`
+  // or re-reported at the same fingerprint) or resolved it (mark_finding_resolved). Anything
+  // left untouched means the agent didn't demonstrably re-examine it — the review is incomplete
+  // and must fail loudly rather than silently dropping the finding or carrying it forever.
+  const unaccountedPriors = (ruleId: string, priors: Finding[]): Finding[] => {
+    if (priors.length === 0) return [];
+    const accounted = new Set<string>();
+    for (const r of sidecar.aggregator.resolutionsFor(ruleId)) accounted.add(r.fingerprint);
+    for (const fp of sidecar.aggregator.openFor(ruleId)) accounted.add(fp);
+    for (const f of sidecar.aggregator.findingsFor(ruleId)) {
+      if (f.priorFp) accounted.add(f.priorFp);
+      accounted.add(f.fingerprint);
+    }
+    return priors.filter((p) => !accounted.has(p.fingerprint));
+  };
+
   // Runs a single rule end-to-end (pre-flight file filtering + provider) and returns its
   // result. Pure w.r.t. ruleResults — the caller pushes and fires onRuleEnd.
   const executeRule = async (rule: (typeof rules)[number]): Promise<RuleResult> => {
@@ -157,12 +174,27 @@ export async function run(cwd: string, config: RevuConfig, hooks: RunHooks = {},
         ...(priorHeadSha ? { priorHeadSha } : {}),
         ...(rule.filePatterns ? { filePatterns: rule.filePatterns } : {}),
       });
+      // Enforce prior-finding accounting: a clean run that ignored any prior finding
+      // is an incomplete review and fails, so a coding agent can't merge past findings
+      // the reviewer never re-examined.
+      let ok = result.ok;
+      let errorMessage = result.errorMessage;
+      if (result.ok && !result.timedOut && priorForRule && priorForRule.length > 0) {
+        const missing = unaccountedPriors(result.ruleId, priorForRule);
+        if (missing.length > 0) {
+          ok = false;
+          errorMessage =
+            `incomplete review: ${missing.length} prior finding(s) left unaccounted — every prior finding must be ` +
+            `confirmed still-open (mark_finding_open / report_finding) or resolved (mark_finding_resolved). ` +
+            `Unaccounted: ${missing.map((f) => f.fingerprint).join(", ")}`;
+        }
+      }
       return {
-        id: result.ruleId, path: rule.relPath, ok: result.ok, durationMs: result.durationMs,
+        id: result.ruleId, path: rule.relPath, ok, durationMs: result.durationMs,
         findingCount: sidecar.aggregator.countFor(result.ruleId),
         summaryCount: sidecar.aggregator.summaryCountFor(result.ruleId),
         checkCount: sidecar.aggregator.checkCountFor(result.ruleId),
-        ...(result.errorMessage ? { errorMessage: result.errorMessage } : {}),
+        ...(errorMessage ? { errorMessage } : {}),
         ...(result.timedOut ? { timedOut: true } : {}),
         ...(result.diagnostics ? { diagnostics: result.diagnostics } : {}),
       };
@@ -227,6 +259,21 @@ export async function run(cwd: string, config: RevuConfig, hooks: RunHooks = {},
   }
 
   const findings: Finding[] = sidecar.aggregator.all();
+
+  // Re-inject prior findings the agents confirmed still-open via `mark_finding_open`
+  // (those that weren't separately re-reported). They aren't fresh findings, but they
+  // are still open, so they belong in the report — the exit code and the carried-forward
+  // cache must reflect that the issue persists.
+  const currentHeadSha = resolved.headSha ?? priorHeadSha ?? "";
+  const presentFps = new Set(findings.map((f) => f.fingerprint));
+  for (const { ruleId, fingerprint } of sidecar.aggregator.allOpen()) {
+    if (presentFps.has(fingerprint)) continue;
+    const prior = priorByRule.get(ruleId)?.find((f) => f.fingerprint === fingerprint);
+    if (!prior) continue;
+    findings.push({ ...prior, lastSeenSha: currentHeadSha });
+    presentFps.add(fingerprint);
+  }
+
   const resolutions = sidecar.aggregator.allResolutions();
   const summaries = sidecar.aggregator
     .allSummaries()

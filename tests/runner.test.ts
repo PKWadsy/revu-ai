@@ -316,13 +316,24 @@ describe("runner — priorReport flow", () => {
         });
         try {
           await client.connect(transport);
-          // alpha agent resolves its prior open finding; beta does nothing.
+          // alpha resolves its prior open finding; beta confirms its prior still-open.
+          // Both rules thereby account for every prior finding they were given.
           if (input.ruleId === ".revu/alpha" && input.priorFindings?.[0]) {
             await client.callTool({
               name: "mark_finding_resolved",
               arguments: { fingerprint: input.priorFindings[0].fingerprint, reason: "fixed" },
             });
           }
+          if (input.ruleId === ".revu/beta" && input.priorFindings?.[0]) {
+            await client.callTool({
+              name: "mark_finding_open",
+              arguments: { fingerprint: input.priorFindings[0].fingerprint },
+            });
+          }
+          await client.callTool({
+            name: "report_review_summary",
+            arguments: { outcome: "pass", checked: "mock", rationale: "mock" },
+          });
         } finally {
           await client.close();
         }
@@ -392,8 +403,83 @@ describe("runner — priorReport flow", () => {
       );
       expect(alphaResolution).toBeDefined();
       expect(alphaResolution?.reason).toBe("fixed");
+
+      // Both rules accounted for every prior finding, so neither fails.
+      expect(report.rules.every((r) => r.ok)).toBe(true);
+
+      // beta confirmed its prior still-open → it's re-injected into the report findings
+      // (it isn't a fresh report_finding, but it's still an open issue).
+      const betaStillOpen = report.findings.find((f) => f.fingerprint === "beta-open-fp");
+      expect(betaStillOpen).toBeDefined();
+      expect(betaStillOpen?.ruleId).toBe(".revu/beta");
+      // alpha's resolved prior is NOT re-injected.
+      expect(report.findings.some((f) => f.fingerprint === "alpha-open-fp")).toBe(false);
     } finally {
       unregisterHarness("mock-prior");
+    }
+  });
+
+  it("fails a rule that leaves a prior finding unaccounted (neither confirmed nor resolved)", async () => {
+    // This agent signs off cleanly but never touches its prior finding — the exact
+    // failure mode the explicit-accounting protocol is meant to catch.
+    const lazyProvider: ReviewAgentFactory = (): ReviewAgent => ({
+      name: "mock-lazy",
+      async run(input: ReviewInput) {
+        const client = new Client({ name: "mock-agent", version: "0.0.1" });
+        const transport = new StreamableHTTPClientTransport(new URL(input.mcp.url), {
+          requestInit: { headers: { Authorization: `Bearer ${input.mcp.authToken}`, "X-Revu-Rule-Id": input.ruleId } },
+        });
+        try {
+          await client.connect(transport);
+          await client.callTool({
+            name: "report_review_summary",
+            arguments: { outcome: "pass", checked: "mock", rationale: "mock" },
+          });
+        } finally {
+          await client.close();
+        }
+        return { ruleId: input.ruleId, ok: true, durationMs: 1 };
+      },
+    });
+    registerHarness("mock-lazy", lazyProvider);
+
+    try {
+      const priorReport: import("../src/types.js").RunReport = {
+        schemaVersion: 3,
+        runId: "prev",
+        startedAt: new Date().toISOString(),
+        completedAt: new Date().toISOString(),
+        reviewTarget: {
+          mode: "ref-range", base: "origin/main", head: "HEAD",
+          baseSha: "0000000", headSha: "deadbee", changedFiles: ["src.ts"],
+          target: { mode: "ref-range", base: "origin/main", head: "HEAD" },
+        },
+        rules: [],
+        findings: [
+          { ruleId: ".revu/alpha", severity: "high", path: "src.ts", line: 1, message: "old-open", fingerprint: "alpha-open-fp" },
+        ],
+        resolutions: [],
+        summaries: [],
+        checks: [],
+      };
+
+      const { report, exitCode } = await run(
+        dir,
+        baseConfig({ harness: "mock-lazy", failOn: "critical", gateOn: "critical" }),
+        {},
+        { priorReport },
+      );
+
+      const alpha = report.rules.find((r) => r.id === ".revu/alpha");
+      expect(alpha?.ok).toBe(false);
+      expect(alpha?.errorMessage).toMatch(/unaccounted|incomplete/i);
+      expect(alpha?.errorMessage).toContain("alpha-open-fp");
+      // beta had no priors → unaffected.
+      expect(report.rules.find((r) => r.id === ".revu/beta")?.ok).toBe(true);
+      // A failed rule forces a non-zero exit regardless of the failOn threshold.
+      expect(exitCode).toBe(2);
+    } finally {
+      unregisterHarness("mock-lazy");
     }
   });
 });
