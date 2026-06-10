@@ -93,6 +93,35 @@ The `files:` patterns are matched against repo-root-relative paths of the change
 
 The agent is told to only report findings that match the rule. If your diff has no logging changes, this rule will silently pass.
 
+### Choosing a harness / model per rule
+
+A rule file can override the agent `harness`, `model`, and `provider` for itself via
+frontmatter — handy for running cheap pattern rules on a fast model and reserving a
+stronger model for rules that need deep reasoning, or routing one service's rules
+through a different provider.
+
+```markdown
+---
+files: "src/api/**/*.py"
+harness: opencode
+provider: google
+model: gemini-2.5-pro
+---
+# Python API contract enforcement
+```
+
+These three keys are an **atomic group**:
+
+- Set **none** of them → the rule uses the run-global harness/model/provider (CLI flags
+  or `revu.config.json`), exactly as before.
+- Set **any** of them → the rule's agent config comes **entirely** from frontmatter; the
+  global config is not consulted for these three. You must then provide `harness` and
+  `model` (and `provider` when `harness: opencode`). An incomplete or empty override
+  fails that rule loudly rather than silently falling back.
+
+`revu-ai list` shows each rule's override in brackets, e.g.
+`python-api  src/api/contract.revu.md  [opencode/google/gemini-2.5-pro]`.
+
 ## How it works
 
 ```

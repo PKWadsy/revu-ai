@@ -66,7 +66,10 @@ program
       return;
     }
     for (const r of rules) {
-      console.log(`${r.ruleId}\t${r.relPath}`);
+      const seg = r.harness
+        ? `  [${[r.harness, r.provider, r.model].filter(Boolean).join("/")}]`
+        : "";
+      console.log(`${r.ruleId}\t${r.relPath}${seg}`);
     }
   });
 

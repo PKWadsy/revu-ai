@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { run } from "../src/runner.js";
+import { listRules, run } from "../src/runner.js";
 import { registerHarness, unregisterHarness } from "../src/providers/registry.js";
 import type { ReviewAgent, ReviewAgentFactory, ReviewInput } from "../src/providers/types.js";
 
@@ -710,5 +710,132 @@ describe("runner — staging and gating", () => {
     const { report } = await run(dir, baseConfig({ failOn: "high", gateOn: "high" }), {}, { priorReport });
 
     expect(report.resolutions.some((r) => r.fingerprint === "beta-prior-fp")).toBe(false);
+  });
+});
+
+/** A harness factory that records every cfg it's instantiated with and, per agent run,
+ *  which ruleId ran and the cfg of the instance it ran on. Reports a summary so the
+ *  review is considered complete. */
+function recordingHarness(
+  log: { instantiations: Array<{ model?: string; provider?: string }>; runs: Array<{ ruleId: string; model?: string; provider?: string }> },
+): ReviewAgentFactory {
+  return (cfg: { model?: string; provider?: string }): ReviewAgent => {
+    log.instantiations.push({ model: cfg.model, provider: cfg.provider });
+    return {
+      name: "recording",
+      async run(input: ReviewInput) {
+        log.runs.push({ ruleId: input.ruleId, model: cfg.model, provider: cfg.provider });
+        const client = new Client({ name: "rec", version: "0.0.1" });
+        const transport = new StreamableHTTPClientTransport(new URL(input.mcp.url), {
+          requestInit: { headers: { Authorization: `Bearer ${input.mcp.authToken}`, "X-Revu-Rule-Id": input.ruleId } },
+        });
+        try {
+          await client.connect(transport);
+          await client.callTool({ name: "report_review_summary", arguments: { outcome: "pass", checked: "x", rationale: "y" } });
+        } finally {
+          await client.close();
+        }
+        return { ruleId: input.ruleId, ok: true, durationMs: 1 };
+      },
+    };
+  };
+}
+
+describe("runner — per-rule agent overrides", () => {
+  // `dir` is created by the file-level beforeEach (git repo with .revu/alpha, .revu/beta, src.ts).
+  function writeRule(rel: string, frontmatter: string) {
+    const abs = join(dir, rel);
+    mkdirSync(join(abs, ".."), { recursive: true });
+    writeFileSync(abs, `${frontmatter}\n# rule body\n`);
+  }
+
+  afterEach(() => {
+    unregisterHarness("rec");
+    unregisterHarness("rec2");
+  });
+
+  it("a rule with no override inherits the global config; one shared instance for many rules", async () => {
+    const log = { instantiations: [] as any[], runs: [] as any[] };
+    registerHarness("rec", recordingHarness(log));
+    git(dir, "add", "."); git(dir, "commit", "--allow-empty", "-m", "rules");
+    await run(dir, baseConfig({ harness: "rec", model: "global-model", provider: "global-prov" }));
+    expect(log.instantiations).toHaveLength(1);
+    expect(log.runs.map((r) => r.model)).toEqual(["global-model", "global-model"]);
+  });
+
+  it("a full override uses frontmatter settings and ignores global config", async () => {
+    const log = { instantiations: [] as any[], runs: [] as any[] };
+    registerHarness("rec", recordingHarness(log));
+    registerHarness("rec2", recordingHarness(log));
+    writeRule(".revu/over.revu.md", "---\nharness: rec2\nprovider: google\nmodel: gemini-2.5-pro\n---");
+    git(dir, "add", "."); git(dir, "commit", "-m", "rules");
+    await run(dir, baseConfig({ harness: "rec", model: "global-model", provider: "global-prov" }));
+    const overRun = log.runs.find((r) => r.ruleId === ".revu/over");
+    expect(overRun).toEqual({ ruleId: ".revu/over", model: "gemini-2.5-pro", provider: "google" });
+  });
+
+  it("two rules with identical overrides share one provider instance", async () => {
+    const log = { instantiations: [] as any[], runs: [] as any[] };
+    registerHarness("rec2", recordingHarness(log));
+    writeRule(".revu/a.revu.md", "---\nharness: rec2\nprovider: google\nmodel: gemini-2.5-pro\n---");
+    writeRule(".revu/b.revu.md", "---\nharness: rec2\nprovider: google\nmodel: gemini-2.5-pro\n---");
+    git(dir, "add", "."); git(dir, "commit", "-m", "rules");
+    registerHarness("rec", recordingHarness({ instantiations: [], runs: [] }));
+    await run(dir, baseConfig({ harness: "rec" }));
+    const gemini = log.instantiations.filter((i) => i.model === "gemini-2.5-pro");
+    expect(gemini).toHaveLength(1);
+  });
+
+  it("fails the rule when model is set without harness; other rules still run", async () => {
+    registerHarness("rec", recordingHarness({ instantiations: [], runs: [] }));
+    writeRule(".revu/bad.revu.md", "---\nmodel: gemini-2.5-pro\n---");
+    git(dir, "add", "."); git(dir, "commit", "-m", "rules");
+    const { report, exitCode } = await run(dir, baseConfig({ harness: "rec" }));
+    const bad = report.rules.find((r) => r.id === ".revu/bad");
+    expect(bad!.ok).toBe(false);
+    expect(bad!.errorMessage).toMatch(/harness/i);
+    expect(exitCode).toBe(2);
+    expect(report.rules.find((r) => r.id === ".revu/alpha")!.ok).toBe(true);
+  });
+
+  it("fails the rule when harness is opencode but provider is missing", async () => {
+    registerHarness("rec", recordingHarness({ instantiations: [], runs: [] }));
+    writeRule(".revu/op.revu.md", "---\nharness: opencode\nmodel: grok-4\n---");
+    git(dir, "add", "."); git(dir, "commit", "-m", "rules");
+    const { report } = await run(dir, baseConfig({ harness: "rec" }));
+    const op = report.rules.find((r) => r.id === ".revu/op");
+    expect(op!.ok).toBe(false);
+    expect(op!.errorMessage).toMatch(/provider/i);
+  });
+
+  it("fails the rule when an override key is present but empty", async () => {
+    registerHarness("rec", recordingHarness({ instantiations: [], runs: [] }));
+    writeRule(".revu/empty.revu.md", "---\nharness:\nmodel: m\n---");
+    git(dir, "add", "."); git(dir, "commit", "-m", "rules");
+    const { report } = await run(dir, baseConfig({ harness: "rec" }));
+    const empty = report.rules.find((r) => r.id === ".revu/empty");
+    expect(empty!.ok).toBe(false);
+    expect(empty!.errorMessage).toMatch(/empty|harness/i);
+  });
+
+  it("fails the rule when the overridden harness is unknown; run continues", async () => {
+    registerHarness("rec", recordingHarness({ instantiations: [], runs: [] }));
+    writeRule(".revu/unknown.revu.md", "---\nharness: nope-harness\nmodel: m\n---");
+    git(dir, "add", "."); git(dir, "commit", "-m", "rules");
+    const { report } = await run(dir, baseConfig({ harness: "rec" }));
+    const unk = report.rules.find((r) => r.id === ".revu/unknown");
+    expect(unk!.ok).toBe(false);
+    expect(unk!.errorMessage).toMatch(/unknown review harness/i);
+    expect(report.rules.find((r) => r.id === ".revu/alpha")!.ok).toBe(true);
+  });
+
+  it("listRules surfaces the per-rule override settings", async () => {
+    writeRule(".revu/op.revu.md", "---\nharness: opencode\nprovider: google\nmodel: gemini-2.5-pro\n---");
+    git(dir, "add", "."); git(dir, "commit", "-m", "rules");
+    const rules = await listRules(dir, "**/*.revu.md");
+    const op = rules.find((r) => r.ruleId === ".revu/op");
+    expect(op).toMatchObject({ harness: "opencode", provider: "google", model: "gemini-2.5-pro" });
+    const plain = rules.find((r) => r.ruleId === ".revu/alpha");
+    expect(plain!.harness).toBeUndefined();
   });
 });

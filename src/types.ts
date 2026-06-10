@@ -20,6 +20,16 @@ export interface RuleFile {
    *  parallel; stages run in ascending order with fail-fast gating between them. When absent,
    *  the rule runs in a final implicit stage after all numbered stages. */
   stage?: number;
+  /** Per-rule agent harness override (frontmatter `harness:`). Part of the atomic
+   *  {harness, model, provider} override group: if any of the three is present, the
+   *  rule's agent config comes entirely from frontmatter. `""` means present-but-empty
+   *  (a broken override the runner fails). When all three are absent the rule inherits
+   *  the run-global config. */
+  harness?: string;
+  /** Per-rule model override (frontmatter `model:`). See `harness`. */
+  model?: string;
+  /** Per-rule provider override (frontmatter `provider:`). See `harness`. */
+  provider?: string;
 }
 
 export interface RuleResult {
