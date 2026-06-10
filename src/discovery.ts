@@ -144,7 +144,14 @@ function deriveRuleId(relPath: string): string {
  *   - `files:` present with one or more patterns → `filePatterns` is those
  *     patterns. If micromatch throws at match time the runner also fails the rule.
  */
-export function parseFrontmatter(rawContent: string): { content: string; filePatterns?: string[]; stage?: number } {
+export function parseFrontmatter(rawContent: string): {
+  content: string;
+  filePatterns?: string[];
+  stage?: number;
+  harness?: string;
+  model?: string;
+  provider?: string;
+} {
   // Frontmatter must start at the very beginning of the file.
   const fmMatch = rawContent.match(/^---[ \t]*\r?\n([\s\S]*?)\n---[ \t]*(\r?\n|$)/);
   if (!fmMatch) return { content: rawContent };
@@ -153,10 +160,16 @@ export function parseFrontmatter(rawContent: string): { content: string; filePat
   const body = rawContent.slice(fmMatch[0].length);
   const filePatterns = parseFrontmatterFiles(frontmatterBlock);
   const stage = parseFrontmatterStage(frontmatterBlock);
+  const harness = parseFrontmatterScalar(frontmatterBlock, "harness");
+  const model = parseFrontmatterScalar(frontmatterBlock, "model");
+  const provider = parseFrontmatterScalar(frontmatterBlock, "provider");
   return {
     content: body,
     ...(filePatterns !== undefined ? { filePatterns } : {}),
     ...(stage !== undefined ? { stage } : {}),
+    ...(harness !== undefined ? { harness } : {}),
+    ...(model !== undefined ? { model } : {}),
+    ...(provider !== undefined ? { provider } : {}),
   };
 }
 
@@ -215,6 +228,21 @@ function parseFrontmatterStage(frontmatter: string): number | undefined {
     throw new Error(`Invalid stage: "${raw}" — stage must be a positive integer (1, 2, 3, …)`);
   }
   return Number(raw);
+}
+
+/**
+ * Parse a single optional scalar frontmatter key (e.g. `harness:`, `model:`, `provider:`).
+ *  - Key absent          → `undefined`
+ *  - Key present, empty   → `""`  (bare `harness:` or `harness: ""`). The runner treats this
+ *                            as a broken override and fails the rule, mirroring empty `files:`.
+ *  - Key present + value  → the trimmed, quote-stripped string.
+ */
+function parseFrontmatterScalar(frontmatter: string, key: "harness" | "model" | "provider"): string | undefined {
+  // Anchored to line start; key must be followed by `:` then optional value.
+  const re = new RegExp(`^${key}:[ \\t]*(.*)$`, "m");
+  const m = frontmatter.match(re);
+  if (!m) return undefined;
+  return (m[1] ?? "").trim().replace(/^["']|["']$/g, "");
 }
 
 export function _testing_deriveRuleId(rel: string): string {

@@ -280,6 +280,57 @@ describe("discoverRules — filePatterns from frontmatter", () => {
   });
 });
 
+describe("parseFrontmatter — agent override keys", () => {
+  it("parses an unquoted harness, model, and provider", () => {
+    const raw = "---\nharness: opencode\nprovider: google\nmodel: gemini-2.5-pro\n---\n# body\n";
+    const { harness, model, provider } = parseFrontmatter(raw);
+    expect(harness).toBe("opencode");
+    expect(model).toBe("gemini-2.5-pro");
+    expect(provider).toBe("google");
+  });
+
+  it("parses quoted values", () => {
+    const raw = '---\nharness: "claude-code"\nmodel: "claude-opus-4-8"\n---\n# body\n';
+    const { harness, model } = parseFrontmatter(raw);
+    expect(harness).toBe("claude-code");
+    expect(model).toBe("claude-opus-4-8");
+  });
+
+  it("represents a quoted-empty value as an empty string", () => {
+    const { harness } = parseFrontmatter('---\nharness: ""\n---\n# body\n');
+    expect(harness).toBe("");
+  });
+
+  it("returns undefined for keys that are absent", () => {
+    const { harness, model, provider } = parseFrontmatter('---\nfiles: "**/*.ts"\n---\n# body\n');
+    expect(harness).toBeUndefined();
+    expect(model).toBeUndefined();
+    expect(provider).toBeUndefined();
+  });
+
+  it("represents a bare (present-but-empty) key as an empty string", () => {
+    const { harness } = parseFrontmatter("---\nharness:\nmodel: claude-opus-4-8\n---\n# body\n");
+    expect(harness).toBe("");
+  });
+
+  it("coexists with files: and stage:", () => {
+    const raw = '---\nstage: 2\nfiles: "**/*.rs"\nharness: opencode\nprovider: xai\nmodel: grok-4\n---\n# body\n';
+    const { stage, filePatterns, harness, provider, model } = parseFrontmatter(raw);
+    expect(stage).toBe(2);
+    expect(filePatterns).toEqual(["**/*.rs"]);
+    expect(harness).toBe("opencode");
+    expect(provider).toBe("xai");
+    expect(model).toBe("grok-4");
+  });
+
+  it("returns undefined keys when there is no frontmatter", () => {
+    const { harness, model, provider } = parseFrontmatter("# just a heading\n");
+    expect(harness).toBeUndefined();
+    expect(model).toBeUndefined();
+    expect(provider).toBeUndefined();
+  });
+});
+
 describe("discoverRules — malformed stage: error wrapping", () => {
   let filterDir: string;
 
