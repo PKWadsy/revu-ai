@@ -2,6 +2,18 @@
 
 All notable changes to `revu-ai` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project's pre-1.0 versioning treats minor bumps as breaking-change boundaries.
 
+## 0.6.0
+
+### Added
+
+- **Per-rule harness / model / provider.** A `*.revu.md` rule file can now override the
+  agent `harness`, `model`, and `provider` in its frontmatter. The three keys form an
+  **atomic group**: declare none and the rule inherits the run-global config; declare any
+  and the rule's agent config comes entirely from frontmatter (`harness` + `model`
+  required, `provider` required for `opencode`). Incomplete or empty overrides fail that
+  rule only (loudly), leaving all other rules unaffected. `revu-ai list` shows each
+  rule's override as `[harness/provider/model]`.
+
 ## 0.5.0
 
 ### Fixed
