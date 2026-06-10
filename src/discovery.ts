@@ -30,7 +30,7 @@ export async function discoverRules(repoRoot: string, pattern: string): Promise<
   return matches.map((rel): RuleFile => {
     const abs = resolve(repoRoot, rel);
     const rawContent = readFileSync(abs, "utf8");
-    let parsed: { content: string; filePatterns?: string[]; stage?: number };
+    let parsed: { content: string; filePatterns?: string[]; stage?: number; harness?: string; model?: string; provider?: string };
     try {
       parsed = parseFrontmatter(rawContent);
     } catch (e) {
@@ -43,6 +43,9 @@ export async function discoverRules(repoRoot: string, pattern: string): Promise<
       content: parsed.content,
       ...(parsed.filePatterns !== undefined ? { filePatterns: parsed.filePatterns } : {}),
       ...(parsed.stage !== undefined ? { stage: parsed.stage } : {}),
+      ...(parsed.harness !== undefined ? { harness: parsed.harness } : {}),
+      ...(parsed.model !== undefined ? { model: parsed.model } : {}),
+      ...(parsed.provider !== undefined ? { provider: parsed.provider } : {}),
     };
   });
 }

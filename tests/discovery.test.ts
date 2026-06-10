@@ -331,6 +331,37 @@ describe("parseFrontmatter — agent override keys", () => {
   });
 });
 
+describe("discoverRules — agent override propagation", () => {
+  let odir: string;
+  beforeAll(() => {
+    odir = mkdtempSync(join(tmpdir(), "revu-override-"));
+    execFileSync("git", ["init", "-q"], { cwd: odir });
+    mkdirSync(join(odir, ".revu"), { recursive: true });
+    writeFileSync(
+      join(odir, ".revu", "with-override.revu.md"),
+      "---\nharness: opencode\nprovider: google\nmodel: gemini-2.5-pro\n---\n# rule",
+    );
+    writeFileSync(join(odir, ".revu", "plain.revu.md"), "# rule");
+    execFileSync("git", ["add", "."], { cwd: odir });
+  });
+  afterAll(() => rmSync(odir, { recursive: true, force: true }));
+
+  it("populates harness/model/provider on discovered rules", async () => {
+    const rules = await discoverRules(odir, "**/*.revu.md");
+    const overridden = rules.find((r) => r.relPath === ".revu/with-override.revu.md");
+    expect(overridden).toBeDefined();
+    expect(overridden!.harness).toBe("opencode");
+    expect(overridden!.provider).toBe("google");
+    expect(overridden!.model).toBe("gemini-2.5-pro");
+
+    const plain = rules.find((r) => r.relPath === ".revu/plain.revu.md");
+    expect(plain).toBeDefined();
+    expect(plain!.harness).toBeUndefined();
+    expect(plain!.model).toBeUndefined();
+    expect(plain!.provider).toBeUndefined();
+  });
+});
+
 describe("discoverRules — malformed stage: error wrapping", () => {
   let filterDir: string;
 
