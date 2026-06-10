@@ -436,8 +436,17 @@ function maxFindingSeverity(findings: Finding[]): number | undefined {
   return max;
 }
 
-export async function listRules(cwd: string, pattern: string): Promise<{ relPath: string; ruleId: string }[]> {
+export async function listRules(
+  cwd: string,
+  pattern: string,
+): Promise<{ relPath: string; ruleId: string; harness?: string; model?: string; provider?: string }[]> {
   const repoRoot = findRepoRoot(cwd);
   const rules = await discoverRules(repoRoot, pattern);
-  return rules.map((r) => ({ relPath: r.relPath, ruleId: r.ruleId }));
+  return rules.map((r) => ({
+    relPath: r.relPath,
+    ruleId: r.ruleId,
+    ...(r.harness !== undefined ? { harness: r.harness } : {}),
+    ...(r.model !== undefined ? { model: r.model } : {}),
+    ...(r.provider !== undefined ? { provider: r.provider } : {}),
+  }));
 }

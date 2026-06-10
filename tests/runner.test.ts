@@ -5,7 +5,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { run } from "../src/runner.js";
+import { listRules, run } from "../src/runner.js";
 import { registerHarness, unregisterHarness } from "../src/providers/registry.js";
 import type { ReviewAgent, ReviewAgentFactory, ReviewInput } from "../src/providers/types.js";
 
@@ -827,5 +827,15 @@ describe("runner — per-rule agent overrides", () => {
     expect(unk!.ok).toBe(false);
     expect(unk!.errorMessage).toMatch(/unknown review harness/i);
     expect(report.rules.find((r) => r.id === ".revu/alpha")!.ok).toBe(true);
+  });
+
+  it("listRules surfaces the per-rule override settings", async () => {
+    writeRule(".revu/op.revu.md", "---\nharness: opencode\nprovider: google\nmodel: gemini-2.5-pro\n---");
+    git(dir, "add", "."); git(dir, "commit", "-m", "rules");
+    const rules = await listRules(dir, "**/*.revu.md");
+    const op = rules.find((r) => r.ruleId === ".revu/op");
+    expect(op).toMatchObject({ harness: "opencode", provider: "google", model: "gemini-2.5-pro" });
+    const plain = rules.find((r) => r.ruleId === ".revu/alpha");
+    expect(plain!.harness).toBeUndefined();
   });
 });
