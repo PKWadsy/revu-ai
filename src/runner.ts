@@ -16,7 +16,7 @@ import type {
   ReviewSummary,
   Severity,
 } from "./types.js";
-import type { ReviewActivity } from "./providers/types.js";
+import type { ReviewActivity, ReviewAgentFactory } from "./providers/types.js";
 
 export interface RunnerResult {
   report: RunReport;
@@ -99,11 +99,66 @@ export async function run(cwd: string, config: RevuConfig, hooks: RunHooks = {},
   const unsubscribeChecks = hooks.onCheck
     ? sidecar.aggregator.onCheck(hooks.onCheck)
     : () => {};
-  const factory = getHarnessFactory(config.harness);
-  const provider = factory({
-    ...(config.model ? { model: config.model } : {}),
-    ...(config.provider ? { provider: config.provider } : {}),
-  });
+  // Effective agent settings for a rule: either the run-global config (no override keys)
+  // or, when the rule declares any of harness/model/provider, the atomic frontmatter group.
+  type ResolvedAgent = { harness: string; model?: string; provider?: string };
+  const resolveRuleAgent = (rule: RuleFile): { agent: ResolvedAgent } | { error: string } => {
+    const hasOverride =
+      rule.harness !== undefined || rule.model !== undefined || rule.provider !== undefined;
+    if (!hasOverride) {
+      return {
+        agent: {
+          harness: config.harness,
+          ...(config.model !== undefined ? { model: config.model } : {}),
+          ...(config.provider !== undefined ? { provider: config.provider } : {}),
+        },
+      };
+    }
+    // Atomic group: any key present means the rule must fully specify its agent config.
+    // `""` (parsed from a bare/empty key) is present-but-empty and is rejected.
+    for (const [key, val] of [
+      ["harness", rule.harness],
+      ["model", rule.model],
+      ["provider", rule.provider],
+    ] as const) {
+      if (val === "") {
+        return { error: `frontmatter \`${key}:\` is empty — give it a value or remove it (the harness/model/provider override is all-or-nothing)` };
+      }
+    }
+    if (rule.harness === undefined) {
+      return { error: "frontmatter sets model/provider without `harness:` — the harness/model/provider override is all-or-nothing" };
+    }
+    if (rule.model === undefined) {
+      return { error: "frontmatter sets `harness:` without `model:` — the harness/model/provider override is all-or-nothing" };
+    }
+    if (rule.harness === "opencode" && rule.provider === undefined) {
+      return { error: "frontmatter `harness: opencode` requires `provider:` (e.g. xai, google, anthropic)" };
+    }
+    return {
+      agent: {
+        harness: rule.harness,
+        model: rule.model,
+        ...(rule.provider !== undefined ? { provider: rule.provider } : {}),
+      },
+    };
+  };
+
+  // Lazily instantiate (and reuse) one ReviewAgent per distinct settings tuple. With no
+  // overrides, every rule shares one instance — byte-for-byte today's behavior.
+  const providerCache = new Map<string, ReturnType<ReviewAgentFactory>>();
+  const getProvider = (a: ResolvedAgent): ReturnType<ReviewAgentFactory> => {
+    const key = `${a.harness}\0${a.provider ?? ""}\0${a.model ?? ""}`;
+    let p = providerCache.get(key);
+    if (!p) {
+      const factory = getHarnessFactory(a.harness); // throws on unknown harness — caller catches
+      p = factory({
+        ...(a.model ? { model: a.model } : {}),
+        ...(a.provider ? { provider: a.provider } : {}),
+      });
+      providerCache.set(key, p);
+    }
+    return p;
+  };
 
   const concurrency = config.concurrency ?? Math.min(8, rules.length);
   const limit = createLimiter(concurrency);
@@ -133,6 +188,17 @@ export async function run(cwd: string, config: RevuConfig, hooks: RunHooks = {},
     const priorForRule = priorByRule.get(rule.ruleId);
     const ruleStart = Date.now();
 
+    // Validate the agent override first so a broken override is always reported,
+    // even for a rule whose files wouldn't match (mirrors the empty-`files:` failure).
+    const resolvedAgent = resolveRuleAgent(rule);
+    if ("error" in resolvedAgent) {
+      return {
+        id: rule.ruleId, path: rule.relPath, ok: false,
+        durationMs: Date.now() - ruleStart, findingCount: 0, summaryCount: 0, checkCount: 0,
+        errorMessage: resolvedAgent.error,
+      };
+    }
+
     if (rule.filePatterns !== undefined) {
       if (rule.filePatterns.length === 0) {
         return {
@@ -158,6 +224,17 @@ export async function run(cwd: string, config: RevuConfig, hooks: RunHooks = {},
           durationMs: 0, findingCount: 0, summaryCount: 0, checkCount: 0, skipped: true,
         };
       }
+    }
+
+    let provider: ReturnType<ReviewAgentFactory>;
+    try {
+      provider = getProvider(resolvedAgent.agent);
+    } catch (e) {
+      return {
+        id: rule.ruleId, path: rule.relPath, ok: false,
+        durationMs: Date.now() - ruleStart, findingCount: 0, summaryCount: 0, checkCount: 0,
+        errorMessage: (e as Error)?.message ?? String(e),
+      };
     }
 
     try {
