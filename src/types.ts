@@ -153,11 +153,12 @@ export interface RevuConfig {
   base?: string;
   workingTree: boolean;
   staged: boolean;
-  /** The agent harness driving the reviewer. Default `claude-code`. `opencode` lets you
-   *  swap in any provider/model opencode supports (xai, google, anthropic, …). */
+  /** The agent harness driving the reviewer. Default `claude-code`.
+   *  `opencode` swaps in any provider/model opencode supports; `grok-build` drives
+   *  xAI's Grok Build CLI (default model: `grok-build` / Grok 4.5). */
   harness: string;
   /** AI provider for harnesses that support multiple (e.g. opencode). Ignored by
-   *  single-provider harnesses like `claude-code`. */
+   *  single-provider harnesses like `claude-code` and `grok-build`. */
   provider?: string;
   model?: string;
   concurrency?: number;

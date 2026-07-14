@@ -25,12 +25,13 @@ pnpm add -D revu-ai
 Set the API key for whichever harness/provider you'll use:
 
 - **Claude Code** (default harness): `ANTHROPIC_API_KEY`
+- **Grok Build** harness: `XAI_API_KEY` (plus the `grok` binary on `PATH`)
 - **opencode** harness with `--provider xai`: `XAI_API_KEY`
 - **opencode** harness with `--provider google`: `GOOGLE_GENERATIVE_AI_API_KEY`
 - **opencode** harness with `--provider anthropic`: `ANTHROPIC_API_KEY`
 - **opencode** harness with `--provider openai`: `OPENAI_API_KEY`
 
-The opencode harness also requires the `opencode` binary on your `PATH` ([install instructions](https://opencode.ai/docs/install/)).
+The Grok Build harness requires the `grok` binary on your `PATH` ([install](https://x.ai/cli) or `npm i -g @xai-official/grok`). The opencode harness requires the `opencode` binary ([install instructions](https://opencode.ai/docs/install/)).
 
 ## Quick start
 
@@ -125,9 +126,9 @@ Options:
   --working-tree            # review uncommitted changes instead of branch
   --staged                  # review staged changes only
   --pattern <glob>          # rule file glob; default: **/*.revu.md
-  --harness <name>          # claude-code | opencode (default: claude-code)
+  --harness <name>          # claude-code | opencode | grok-build (default: claude-code)
   --provider <name>         # AI provider id (opencode harness only) — e.g. xai, google, anthropic
-  --model <id>              # model id passed to harness
+  --model <id>              # model id passed to harness (grok-build default: grok-build / Grok 4.5)
   --concurrency <n>         # max parallel agents; default: min(8, ruleCount)
   --output <fmt>            # pretty | json | github (default: auto)
   --output-file <path>      # also write output to a file
@@ -153,12 +154,37 @@ Exit codes: `0` clean, `1` findings ≥ `--fail-on`, `2` runner / agent error.
 }
 ```
 
-### Using opencode (Gemini, Grok, OpenAI, …)
+### Using Grok Build (Grok 4.5)
 
-`revu-ai` supports [opencode](https://opencode.ai) as an alternative harness, which lets you swap in any provider+model opencode supports.
+`revu-ai` supports [Grok Build](https://x.ai/cli) as a first-class harness. It shells out to the `grok` CLI in headless mode, wires the revu MCP sidecar through an isolated `GROK_HOME`, and defaults to the `grok-build` model (Grok 4.5).
 
 ```bash
-# Grok via xAI
+# Grok 4.5 via Grok Build (recommended)
+revu-ai --harness grok-build
+
+# Pin the explicit API model id (auto-registered under GROK_HOME)
+revu-ai --harness grok-build --model grok-4.5
+
+revu-ai init --harness grok-build
+```
+
+Or in `revu.config.json`:
+
+```json
+{
+  "harness": "grok-build",
+  "model": "grok-build"
+}
+```
+
+> **Note on safety:** Under the grok-build harness, reviews run with `--permission-mode dontAsk` and `--sandbox read-only`. Edit/Write/WebFetch/Task are denied; bash is limited to read-only patterns; MCP tools are allowlisted to `revu__*`. Scaffold (`init`) routes rule-file writes through `revu__write_rule_file`.
+
+### Using opencode (Gemini, Grok API, OpenAI, …)
+
+`revu-ai` also supports [opencode](https://opencode.ai) as an alternative harness, which lets you swap in any provider+model opencode supports (including raw xAI API models without the Grok Build CLI).
+
+```bash
+# Grok via xAI through opencode
 revu-ai --harness opencode --provider xai --model grok-4-1-fast-reasoning
 
 # Gemini 2.5 Pro via Google
@@ -246,7 +272,7 @@ revu-ai github post --report /tmp/revu.json [options]
 
 ## Custom harnesses
 
-Two harnesses ship out of the box: `claude-code` (via `@anthropic-ai/claude-agent-sdk`) and `opencode` (via `@opencode-ai/sdk`). The `ReviewAgent` interface in `src/providers/types.ts` is the swap-out boundary for adding more:
+Three harnesses ship out of the box: `claude-code` (via `@anthropic-ai/claude-agent-sdk`), `opencode` (via `@opencode-ai/sdk`), and `grok-build` (via the [Grok Build](https://x.ai/cli) `grok` CLI). The `ReviewAgent` interface in `src/providers/types.ts` is the swap-out boundary for adding more:
 
 ```ts
 import { registerHarness } from "revu-ai";

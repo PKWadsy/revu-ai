@@ -2,6 +2,36 @@
 
 All notable changes to `revu-ai` are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project's pre-1.0 versioning treats minor bumps as breaking-change boundaries.
 
+## 0.6.0
+
+### Added
+
+- **Grok Build harness (`--harness grok-build`).** First-class support for
+  [Grok Build](https://x.ai/cli) driven by Grok 4.5. Each rule gets an isolated
+  `GROK_HOME` with a temp `config.toml` that wires the revu MCP sidecar
+  (auth + `X-Revu-Rule-Id` headers), disables host Claude/Cursor MCP pickup,
+  and — when you pass a raw API model id like `grok-4.5` — registers that id
+  so CLI catalog lag can't reject it. Default model is `grok-build` (Grok 4.5).
+  ```bash
+  revu-ai --harness grok-build
+  revu-ai --harness grok-build --model grok-4.5
+  revu-ai init --harness grok-build
+  ```
+  Requires the `grok` binary on `PATH` (`curl -fsSL https://x.ai/cli/install.sh | bash`
+  or `npm i -g @xai-official/grok`) and `XAI_API_KEY`.
+- Reviews run headlessly with `--permission-mode dontAsk`, `--sandbox read-only`,
+  `--no-subagents`, and `--disable-web-search`. Edit/Write/WebFetch/Task are
+  denied; bash is limited to read-only patterns; MCP tools are allowlisted to
+  `revu__*`. System prompts rewrite Claude-style `mcp__revu__*` tool names to
+  Grok Build's `revu__*` namespace. Scaffold (`init`) routes writes through
+  `revu__write_rule_file`.
+
+### Changed
+
+- Dogfood GitHub Action (`.github/workflows/revu-ai.yml`) now uses
+  `--harness grok-build --model grok-build` and installs `@xai-official/grok`
+  instead of opencode + `grok-4-1-fast-non-reasoning`.
+
 ## 0.5.0
 
 ### Fixed

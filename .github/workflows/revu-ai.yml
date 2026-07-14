@@ -3,10 +3,10 @@
 # Runs the version of revu-ai that is *in this PR* (built from source,
 # not the npm-published one) so every PR is reviewed by its own changes.
 #
-# Harness: opencode + xAI's `grok-4-1-fast-non-reasoning` (2M context,
-# ~$0.20/M input). The opencode binary must be on PATH; we install it
-# from npm. Switch to `grok-4-1-fast-reasoning` if reviews start missing
-# subtle issues — same context window and pricing, slower but deeper.
+# Harness: Grok Build + its default `grok-build` model (Grok 4.5). The
+# `grok` binary must be on PATH; we install it from npm
+# (`@xai-official/grok`). Override with `--model grok-4.5` if you want the
+# explicit API id (the harness auto-registers it under GROK_HOME).
 #
 # Cross-run state: actions/cache restores the prior --output-file report
 # (so reviewers see their previous open findings as system-prompt context;
@@ -48,9 +48,9 @@ jobs:
 
       - run: pnpm build
 
-      # opencode harness needs the `opencode` binary on PATH.
-      - name: Install opencode CLI
-        run: npm install -g opencode-ai@latest
+      # Grok Build harness needs the `grok` binary on PATH.
+      - name: Install Grok Build CLI
+        run: npm install -g @xai-official/grok@latest
 
       - name: Restore prior revu-ai report
         uses: actions/cache@v4
@@ -74,22 +74,18 @@ jobs:
           if [ -f /tmp/revu-prior.json ]; then
             PRIOR_FLAG="--prior-report /tmp/revu-prior.json"
           fi
-          # The opencode harness isolates each rule's server with a per-rule
-          # XDG_DATA_HOME so concurrent fan-out is safe. grok-4-1-fast-reasoning
-          # has a 2M-token context, so large-file Reads are not a concern under
-          # this harness.
+          # Each rule gets an isolated GROK_HOME (temp config.toml + MCP
+          # sidecar headers) so concurrent fan-out is safe. Grok 4.5's
+          # 500k context is enough for typical rule-scoped Reads.
           # `--output pretty` prints a human-scannable summary to stdout
           # so the CI run page is easy to skim. `--output-file` always
           # writes JSON regardless of stdout format — the cache step below
           # picks it up so the next run can `--prior-report` against it.
-          # Concurrency 3: GHA runners are 2 vCPU; 7 parallel opencode
-          # children + xAI streams was over-stressing the slot. Three at
-          # a time keeps the activity stream readable and we still finish
-          # all 7 rules in ~3 minutes.
+          # Concurrency 3: GHA runners are 2 vCPU; keep the activity stream
+          # readable while still finishing the rule set quickly.
           node dist/cli.js \
-            --harness opencode \
-            --provider xai \
-            --model grok-4-1-fast-non-reasoning \
+            --harness grok-build \
+            --model grok-build \
             --base "origin/$BASE_REF" \
             --output pretty \
             --output-file /tmp/revu.json \
