@@ -1,5 +1,6 @@
 import { claudeCodeProvider, claudeCodeScaffoldProvider } from "./claude-code.js";
 import { opencodeProvider, opencodeScaffoldProvider } from "./opencode.js";
+import { grokProvider, grokScaffoldProvider } from "./grok.js";
 import type { ReviewAgentFactory, ScaffoldAgentFactory } from "./types.js";
 
 interface HarnessEntry {
@@ -20,6 +21,13 @@ const HARNESSES: Map<string, HarnessEntry> = new Map([
     {
       review: opencodeProvider as ReviewAgentFactory,
       scaffold: opencodeScaffoldProvider as ScaffoldAgentFactory,
+    },
+  ],
+  [
+    "grok",
+    {
+      review: grokProvider as ReviewAgentFactory,
+      scaffold: grokScaffoldProvider as ScaffoldAgentFactory,
     },
   ],
 ]);

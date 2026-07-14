@@ -25,6 +25,7 @@ pnpm add -D revu-ai
 Set the API key for whichever harness/provider you'll use:
 
 - **Claude Code** (default harness): `ANTHROPIC_API_KEY`
+- **Grok Build** harness (`--harness grok`): `XAI_API_KEY`
 - **opencode** harness with `--provider xai`: `XAI_API_KEY`
 - **opencode** harness with `--provider google`: `GOOGLE_GENERATIVE_AI_API_KEY`
 - **opencode** harness with `--provider anthropic`: `ANTHROPIC_API_KEY`
@@ -125,7 +126,7 @@ Options:
   --working-tree            # review uncommitted changes instead of branch
   --staged                  # review staged changes only
   --pattern <glob>          # rule file glob; default: **/*.revu.md
-  --harness <name>          # claude-code | opencode (default: claude-code)
+  --harness <name>          # claude-code | opencode | grok (default: claude-code)
   --provider <name>         # AI provider id (opencode harness only) — e.g. xai, google, anthropic
   --model <id>              # model id passed to harness
   --concurrency <n>         # max parallel agents; default: min(8, ruleCount)
@@ -152,6 +153,30 @@ Exit codes: `0` clean, `1` findings ≥ `--fail-on`, `2` runner / agent error.
   "failOn": "high"
 }
 ```
+
+### Using Grok Build (Grok 4.5)
+
+[Grok Build](https://x.ai/cli) is xAI's coding-agent CLI. revu-ai drives it in its headless mode (`grok -p … --output-format streaming-json`), one process per rule, so you can review with Grok 4.5 directly:
+
+```bash
+# Install the Grok CLI once (adds `grok` to ~/.grok/bin — put it on PATH):
+curl -fsSL https://x.ai/cli/install.sh | bash
+
+export XAI_API_KEY=xai-...      # or run `grok login` once
+revu-ai --harness grok                         # defaults to grok-4.5
+revu-ai --harness grok --model grok-4.5        # explicit
+```
+
+Or in `revu.config.json`:
+
+```json
+{
+  "harness": "grok",
+  "model": "grok-4.5"
+}
+```
+
+Each rule runs in an isolated `$HOME` with a generated `~/.grok/config.toml` that registers the revu MCP sidecar (with the per-rule auth header). File-mutating tools are removed and denied; the reviewer inspects the diff with read-only `git` and reports findings through the sidecar — same contract as the other harnesses.
 
 ### Using opencode (Gemini, Grok, OpenAI, …)
 
